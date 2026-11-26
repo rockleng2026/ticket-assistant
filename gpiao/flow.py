@@ -500,12 +500,23 @@ def _act_require(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
 
 
 def _act_search_submit(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
-    """输入关键词并提交搜索（比 search 稳：先等输入框真正拿到焦点再输入）。"""
+    """输入关键词并提交搜索（更稳：先等输入框真正拿到焦点再打字）。
+
+    搜索框的 hint 各家不同（美团「搜索明星…」，大麦「话剧音乐剧都在这哦」），
+    所以找不到指定 hint 时会退化成"页面上的第一个 EditText"。
+    """
     keyword = step.get("text") or ctx.recipe.concert.search_keyword
     size = ctx.screen_size()
     box = Target.from_dict("inline", {"textContains": step.get("box_hint", "搜索明星")})
     if not box.exists(ctx.device, size):
         box = Target.from_dict("inline", {"textContains": step.get("fallback_hint", "搜索")})
+    if not box.exists(ctx.device, size):
+        # 退化成任意 EditText（大麦的搜索框 hint 不是「搜索…」）
+        try:
+            if ctx.device.u2(className="android.widget.EditText").count:
+                box = Target.from_dict("inline", {"className": "android.widget.EditText"})
+        except Exception:  # noqa: BLE001
+            pass
     if not box.click(ctx.device, size):
         _log_step(ctx, "未找到搜索输入框")
         return StepResult("search_submit", False, keyword)
@@ -514,20 +525,47 @@ def _act_search_submit(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
         ctx.device.u2.set_fastinput_ime(True)
     except Exception:  # noqa: BLE001
         pass
+
+    # 先清空：搜索框里常预填了热搜词（大麦首页是「黎明深圳演唱会」），
+    # 不清会拼成「黎明深圳演唱会潘玮柏」，搜出来的结果就不对了
+    cleared = False
+    try:
+        edits = ctx.device.u2(className="android.widget.EditText")
+        if edits.count:
+            edits[0].set_text("")
+            cleared = True
+    except Exception:  # noqa: BLE001
+        pass
+    if cleared:
+        time.sleep(0.5)
+
     typed = False
-    for _ in range(3):
+    for attempt in range(3):
         try:
             ctx.device.type_text(keyword)
         except Exception as exc:  # noqa: BLE001
             _log_step(ctx, f"输入异常: {exc}")
-        time.sleep(1.2)
-        typed = Target.from_dict("inline", {"text": keyword}).exists(ctx.device, size)
-        if typed:
+        time.sleep(1.0)
+        # 校验输入框内容是不是正好等于关键词（防止反复叠加）
+        try:
+            cur = ctx.device.u2(className="android.widget.EditText")
+            got = (cur[0].info.get("text") or "") if cur.count else ""
+        except Exception:  # noqa: BLE001
+            got = ""
+        if got.strip() == keyword:
+            typed = True
             break
+        if attempt < 2:
+            try:
+                ctx.device.u2(className="android.widget.EditText")[0].set_text("")
+                time.sleep(0.4)
+            except Exception:  # noqa: BLE001
+                pass
     ctx.device.press("enter")
     time.sleep(float(step.get("settle", 4.0)))
     _log_step(ctx, f"搜索提交: {keyword} (输入{'成功' if typed else '未确认'})")
     return StepResult("search_submit", typed, keyword)
+
 
 
 def _act_back(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
@@ -915,7 +953,67 @@ def _act_loop(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     return StepResult("loop", ok, "")
 
 
+def _act_check_reservation(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
+    """大麦专属：核对「去设置」里的抢票预约信息。
+
+    大麦的预约信息（观演人 / 场次 / 票档 / 票张数）是**开抢瞬间自动套用**的，
+    配错了开抢就会买错票或买不成，所以上膛前必须核对一次。
+
+    做法：点「去设置」进 H5 页，把「票档：¥ 380」「票张数：1张」读出来比对。
+    """
+    size = ctx.screen_size()
+    want_tier = step.get("tier")
+    want_qty = step.get("quantity")
+
+    entry = Target.from_dict("inline", {"text": "去设置"})
+    if not entry.exists(ctx.device, size):
+        _log_step(ctx, "预约核对: 页面没有「去设置」（可能还没开售/不可预约），跳过")
+        return StepResult("check_reservation", True, "no-entry")
+    entry.click(ctx.device, size)
+    time.sleep(3.5)
+
+    try:
+        import re as _re
+
+        xml = ctx.device.u2.dump_hierarchy()
+        texts = _re.findall(r'text="([^"]*)"', xml)
+    except Exception:  # noqa: BLE001
+        texts = []
+
+    tier_line = next((t for t in texts if t.startswith("票档")), "")
+    qty_line = next((t for t in texts if t.startswith("票张数")), "")
+    people = [t for t in texts if t.startswith("观演人")]
+    session_line = next((t for t in texts if "周" in t and ":" in t), "")
+
+    _log_step(ctx, f"预约核对: {session_line} | {tier_line} | {qty_line} | {'、'.join(people)}")
+
+    ok = True
+    if want_tier:
+        norm_want = str(want_tier).replace("￥", "¥").replace(" ", "")
+        norm_got = tier_line.replace(" ", "")
+        if norm_want not in norm_got:
+            _log_step(ctx, f"预约核对: 票档不符！期望 {want_tier}，实际「{tier_line}」")
+            ok = False
+    if want_qty:
+        m = _re.search(r"(\d+)\s*张", qty_line)
+        got = int(m.group(1)) if m else None
+        if got != int(want_qty):
+            _log_step(ctx, f"预约核对: 票张数不符！期望 {want_qty}，实际「{qty_line}」")
+            ok = False
+
+    # 返回详情页
+    ctx.device.press("back")
+    time.sleep(2.5)
+    _safe_shot(ctx, "reservation-check")
+    if ok:
+        _log_step(ctx, "预约核对: 通过")
+    else:
+        _log_step(ctx, "预约核对: 不通过 —— 请在「去设置」里改好观演人/票档/票张数")
+    return StepResult("check_reservation", ok, tier_line + " " + qty_line)
+
+
 ACTIONS = {
+
     "launch": _act_launch,
     "deep_link": _act_deep_link,
     "search": _act_search,
@@ -936,6 +1034,7 @@ ACTIONS = {
     "select_quantity": _act_select_quantity,
     "loop": _act_loop,
     "burst": _act_burst,
+    "check_reservation": _act_check_reservation,
     "dismiss": _act_dismiss,
     "require": _act_require,
     "stop": _act_stop,

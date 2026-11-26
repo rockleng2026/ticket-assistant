@@ -69,6 +69,9 @@ class ConcertConfig:
     quantity: int = 1
     max_price: Optional[int] = None
     attendees: int = 0
+    # 搜索结果里用于精确匹配演出的关键词（比搜索关键字更准，
+    # 避免匹配到搜索框里刚输入的那几个字）
+    result_match: Optional[str] = None
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "ConcertConfig":
@@ -87,6 +90,7 @@ class ConcertConfig:
             quantity=qty,
             max_price=raw.get("max_price"),
             attendees=int(raw.get("attendees", qty)),
+            result_match=raw.get("result_match"),
         )
 
 

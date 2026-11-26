@@ -206,6 +206,19 @@ def apply_params_to_recipe(recipe: Recipe, task: Task) -> Recipe:
         recipe.concert.search_keyword = task.target["keyword"]
     if task.target.get("show_name"):
         recipe.concert.name = task.target["show_name"]
+    if task.target.get("result_match"):
+        recipe.concert.result_match = task.target["result_match"]
+        # 搜索结果控件改用更精确的匹配串（避免点到搜索框里的输入内容）
+        for step in recipe.steps:
+            if step.get("action") == "wait" and step.get("target") == "result_show":
+                step["target"] = "result_show"
+        if "result_show" in recipe.selectors:
+            recipe.selectors["result_show"] = {
+                "candidates": [
+                    {"textContains": task.target["result_match"]},
+                    {"textContains": recipe.concert.search_keyword},
+                ]
+            }
     if task.schedule.sale_at:
         recipe.sale.at = task.schedule.sale_at
         recipe.sale.lead_seconds = task.schedule.lead_seconds

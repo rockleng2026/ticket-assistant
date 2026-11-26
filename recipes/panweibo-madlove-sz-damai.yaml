@@ -1,0 +1,187 @@
+name: 潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站(大麦)
+platform: damai
+app:
+  package: cn.damai
+  main_activity: .homepage.MainActivity
+  search_entry_hint: 搜索
+  deep_link: null
+concert:
+  name: 潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站(大麦)
+  search_keyword: 潘玮柏
+  session: null
+  tier: null
+  tier_priority:
+  - ¥380
+  quantity: 1
+  max_price: null
+  attendees: 1
+  result_match: MADLOVE:ULTRA
+sale:
+  at: '2026-11-27 13:22:00'
+  lead_seconds: 0.5
+  burst_seconds: 8.0
+  tap_interval_ms: 120
+  timezone: UTC+08:00
+  wait_timeout: 900.0
+  preflight_seconds: 300.0
+device:
+  serial: null
+  connect: null
+  auto_prepare: true
+  orientation: portrait
+selectors:
+  search_entry:
+    candidates:
+    - text: 搜索
+    - textContains: 记录音乐现场
+    - descContains: 搜索
+  result_show:
+    candidates:
+    - textContains: MADLOVE:ULTRA
+    - textContains: 潘玮柏
+  detail_ready:
+    candidates:
+    - text: 去设置
+    - text: 添加到日历
+    - textContains: 预售
+    - textContains: 抢票加速
+    - textContains: 实名制
+  buy_button:
+    candidates:
+    - text: 立即购买
+    - text: 立即抢购
+    - textNorm: 已预约
+    - bottomWideButton: true
+    - coord:
+      - 0.6313
+      - 0.9399
+    aliases:
+    - 立即购买
+    - 立即抢购
+    - 去预约
+    - 已预约
+  ticket_ready:
+    candidates:
+    - text: 确认
+    - text: 提交订单
+    - textContains: 票档
+    - textContains: 观演人
+  order_ready:
+    candidates:
+    - text: 提交订单
+    - text: 确认无误
+    - textContains: 配送方式
+    - textContains: 应付金额
+  tier:
+    candidates:
+    - text: ¥380
+    - text: '380'
+  qty_plus:
+    candidates:
+    - descContains: 增加
+    - text: +
+  confirm_button:
+    candidates:
+    - text: 确认
+    - text: 提交订单
+  pay_button:
+    candidates:
+    - text: 提交订单
+    - text: 立即支付
+  reservation_entry:
+    candidates:
+    - text: 去设置
+  reservation_info:
+    candidates:
+    - textContains: 票张数
+    - textContains: 票档
+  logged_out_marker:
+    candidates:
+    - textContains: 登录
+    - textContains: 我的-未登录
+steps:
+- action: wake
+  phase: pre
+- action: launch
+  phase: pre
+  settle: 6.0
+- action: wait
+  phase: pre
+  target: search_entry
+  timeout: 20
+- action: tap
+  phase: pre
+  target: search_entry
+  settle: 2.5
+- action: search_submit
+  phase: pre
+  text: 潘玮柏
+  box_hint: 话剧音乐剧都在这哦
+  fallback_hint: 搜索
+  settle: 5.0
+- action: wait
+  phase: pre
+  target: result_show
+  timeout: 20
+- action: tap
+  phase: pre
+  target: result_show
+  settle: 8.0
+- action: wait
+  phase: pre
+  target: detail_ready
+  timeout: 20
+- action: check_reservation
+  phase: pre
+  tier: ¥380
+  quantity: 1
+  optional: true
+- action: scroll_top
+  phase: pre
+  times: 10
+  settle: 0.3
+- action: wait
+  phase: pre
+  target: buy_button
+  timeout: 25
+- action: require
+  phase: pre
+  target: logged_out_marker
+  expect: absent
+  message: 大麦未登录，请先在 App 内登录
+- action: dump
+  phase: pre
+  prefix: armed
+- action: burst
+  phase: fire
+  target: buy_button
+  until: ticket_ready
+  mode: auto
+  window: 8.0
+  interval_ms: 120
+  check_every_ms: 150
+- action: loop
+  phase: post
+  until: order_ready
+  max_rounds: 2
+  budget: 8
+  steps:
+  - action: tap
+    target: confirm_button
+    until: order_ready
+    until_timeout: 2.0
+    retry: 1
+    settle: 0.1
+    optional: true
+- action: tap
+  phase: post
+  target: pay_button
+  settle: 2.0
+  requires_submit: true
+  optional: true
+- action: stop
+  phase: post
+  message: 已生成订单，请手动完成支付
+stop_before_payment: true
+submit_order: false
+auto_pay: false

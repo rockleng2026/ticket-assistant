@@ -257,22 +257,32 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
 
 
 def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
-    """大麦脚手架。
+    """大麦模板。
 
-    大麦的控件和美团完全不同，且必须先在 App 里登录 + 完成实名。
-    这里给出结构 + 占位选择器，用 `gpiao record` 标定后即可用。
+    大麦的「预约」机制是抢票的关键：
+      在详情页点「去设置」，把 **实名观演人 / 场次 / 票档 / 票张数** 全选好，
+      开抢后大麦会「在场次票档页面自动勾选预约的票档」——
+      也就是说**开抢瞬间只需要点一下底部那个按钮**，选票选人全是大麦自己做的。
+
+    所以大麦的脚本比美团简单得多，也快得多：
+      pre  —— 导航到详情页、核对预约信息、回顶、定位购买按钮
+      fire —— 连点底部购买按钮（坐标，canvas 绘制没有文本）
+      post —— 等订单页，提交订单
+
+    预约信息（观演人/票档/票张数）建议人工在「去设置」里配好，
+    因为每次任务的人都不一样，而且那是 H5 页面。
     """
     return {
         "name": task_name,
         "platform": "damai",
         "app": {
             "package": "cn.damai",
-            "main_activity": None,
+            "main_activity": ".homepage.MainActivity",
         },
         "concert": {
             "name": task_name,
             "search_keyword": keyword,
-            "tier_priority": ["¥680"],
+            "tier_priority": ["¥380"],
             "quantity": 1,
             "attendees": 1,
         },
@@ -280,7 +290,7 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
             "at": "2026-01-01 12:00:00",
             "lead_seconds": 0.5,
             "burst_seconds": 8.0,
-            "tap_interval_ms": 180,
+            "tap_interval_ms": 120,
             "timezone": "+08:00",
         },
         "device": {"connect": None, "serial": None, "auto_prepare": True},
@@ -288,34 +298,103 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
         "submit_order": False,
         "auto_pay": False,
         "selectors": {
-            # TODO 标定：python -m gpiao record -r <recipe> -t <名字>
-            "search_entry": {"candidates": [{"descContains": "搜索"}, {"text": "搜索"}]},
-            "result_show": {"candidates": [{"textContains": keyword}]},
+            # 首页顶部的搜索框（是 ViewGroup + 内部 TextView）
+            "search_entry": {
+                "candidates": [
+                    {"text": "搜索"},
+                    {"textContains": "记录音乐现场"},
+                    {"descContains": "搜索"},
+                ]
+            },
+            # 搜索结果里的演出名（可用 result_match 更精确）
+            "result_show": {
+                "candidates": [
+                    {"textContains": keyword},
+                    {"textContains": "巡回演唱会"},
+                ]
+            },
+            # 详情页标志（用来确认真的进到了演出详情页）
+            "detail_ready": {
+                "candidates": [
+                    {"text": "去设置"},
+                    {"text": "添加到日历"},
+                    {"textContains": "预售"},
+                    {"textContains": "抢票加速"},
+                    {"textContains": "实名制"},
+                ]
+            },
+            # 详情页的购买按钮：canvas 绘制，没有 text 也没有 clickable，
+            # 只能用「底部最宽的大按钮」或坐标来认。
             "buy_button": {
                 "candidates": [
                     {"text": "立即购买"},
-                    {"text": "立即购票"},
-                    {"textContains": "购买"},
-                    {"coord": [0.5, 0.94]},
+                    {"text": "立即抢购"},
+                    {"textNorm": "已预约"},
+                    {"bottomWideButton": True},
+                    {"coord": [0.6313, 0.9399]},
                 ],
-                "aliases": ["立即购买", "立即购票", "预约", "即将开售"],
+                "aliases": ["立即购买", "立即抢购", "去预约", "已预约"],
             },
-            "ticket_ready": {"candidates": [{"text": "选票"}, {"text": "选择票档"}]},
-            "order_ready": {"candidates": [{"text": "提交订单"}, {"textContains": "订单"}]},
-            "tier": {"candidates": [{"text": "¥680"}, {"text": "680"}]},
+            # 购买面板标志（大麦点完立即购买会进选票页）
+            "ticket_ready": {
+                "candidates": [
+                    {"text": "确认"},
+                    {"text": "提交订单"},
+                    {"textContains": "票档"},
+                    {"textContains": "观演人"},
+                ]
+            },
+            # 订单页标志
+            "order_ready": {
+                "candidates": [
+                    {"text": "提交订单"},
+                    {"text": "确认无误"},
+                    {"textContains": "配送方式"},
+                    {"textContains": "应付金额"},
+                ]
+            },
+            "tier": {"candidates": [{"text": "¥380"}, {"text": "380"}]},
             "qty_plus": {"candidates": [{"descContains": "增加"}, {"text": "+"}]},
             "confirm_button": {"candidates": [{"text": "确认"}, {"text": "提交订单"}]},
             "pay_button": {"candidates": [{"text": "提交订单"}, {"text": "立即支付"}]},
-            "logged_out_marker": {"candidates": [{"textContains": "登录"}]},
+            # 「去设置」里的预约信息（核对用）
+            "reservation_entry": {"candidates": [{"text": "去设置"}]},
+            "reservation_info": {
+                "candidates": [
+                    {"textContains": "票张数"},
+                    {"textContains": "票档"},
+                ]
+            },
+            "logged_out_marker": {
+                "candidates": [{"textContains": "登录"}, {"textContains": "我的-未登录"}]
+            },
         },
         "steps": [
             {"action": "wake", "phase": "pre"},
             {"action": "launch", "phase": "pre", "settle": 6.0},
+            # 首页搜索：先等首页加载完，否则点「搜索」会点空
             {"action": "wait", "phase": "pre", "target": "search_entry", "timeout": 20},
-            {"action": "tap", "phase": "pre", "target": "search_entry", "settle": 2.0},
-            {"action": "search_submit", "phase": "pre", "text": keyword, "settle": 5.0},
+            {"action": "tap", "phase": "pre", "target": "search_entry", "settle": 2.5},
+            {
+                "action": "search_submit",
+                "phase": "pre",
+                "text": keyword,
+                "box_hint": "话剧音乐剧都在这哦",
+                "fallback_hint": "搜索",
+                "settle": 5.0,
+            },
             {"action": "wait", "phase": "pre", "target": "result_show", "timeout": 20},
-            {"action": "tap", "phase": "pre", "target": "result_show", "settle": 6.0},
+            {"action": "tap", "phase": "pre", "target": "result_show", "settle": 8.0},
+            # 确认真的进到了详情页（否则「底部宽按钮」会误匹配到别的横幅）
+            {"action": "wait", "phase": "pre", "target": "detail_ready", "timeout": 20},
+            # 核对大麦的「预约」信息（观演人/票档/票张数）
+            {
+                "action": "check_reservation",
+                "phase": "pre",
+                "tier": "¥380",
+                "quantity": 1,
+                "optional": True,
+            },
             {"action": "scroll_top", "phase": "pre", "times": 10, "settle": 0.3},
             {"action": "wait", "phase": "pre", "target": "buy_button", "timeout": 25},
             {
@@ -325,6 +404,8 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "expect": "absent",
                 "message": "大麦未登录，请先在 App 内登录",
             },
+            {"action": "dump", "phase": "pre", "prefix": "armed"},
+            # 到点连点购买按钮
             {
                 "action": "burst",
                 "phase": "fire",
@@ -332,30 +413,25 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "until": "ticket_ready",
                 "mode": "auto",
                 "window": 8.0,
-                "interval_ms": 180,
-                "check_every_ms": 350,
+                "interval_ms": 120,
+                "check_every_ms": 150,
             },
             {
                 "action": "loop",
                 "phase": "post",
                 "until": "order_ready",
-                "max_rounds": 3,
-                "budget": 12,
+                "max_rounds": 2,
+                "budget": 8,
                 "steps": [
                     {
-                        "action": "select_tier",
-                        "priority": ["¥680"],
-                        "wait": 0.8,
-                        "settle": 0.35,
+                        "action": "tap",
+                        "target": "confirm_button",
+                        "until": "order_ready",
+                        "until_timeout": 2.0,
+                        "retry": 1,
+                        "settle": 0.1,
                         "optional": True,
                     },
-                    {
-                        "action": "select_quantity",
-                        "plus_target": "qty_plus",
-                        "current": 1,
-                        "optional": True,
-                    },
-                    {"action": "tap", "target": "confirm_button", "settle": 1.5, "optional": True},
                 ],
             },
             {

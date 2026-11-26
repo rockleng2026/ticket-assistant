@@ -204,6 +204,7 @@ def cmd_task(args) -> int:
                 "keyword": keyword,
                 "show_name": name,
                 "city": args.city,
+                "result_match": args.result_match or None,
             },
             params={
                 "tier_priority": prices,
@@ -760,6 +761,12 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--name", help="演出名称")
     c.add_argument("--keyword", required=True, help="App 内搜索关键字")
     c.add_argument("--city", default="深圳")
+    c.add_argument(
+        "--result-match",
+        help="搜索结果里更精确的匹配串（如 MADLOVE:ULTRA），"
+        "避免匹配到搜索框里刚输入的内容",
+    )
+
     c.add_argument("--price", required=True, help="价格优先级，如 680 或 680,480,880")
     c.add_argument("--qty", type=int, default=1, help="购票数量")
     c.add_argument("--attendees", type=int, default=None, help="实名观演人位数（须等于票数）")

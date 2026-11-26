@@ -1,0 +1,41 @@
+{
+  "id": "panweibo-madlove-sz-damai",
+  "name": "潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站(大麦)",
+  "platform": "damai",
+  "status": "armed",
+  "created_at": "2026-11-26 15:19:22",
+  "schedule": {
+    "sale_at": "2026-11-27 13:22:00",
+    "prepare_lead_minutes": 60,
+    "lead_seconds": 0.5
+  },
+  "target": {
+    "keyword": "潘玮柏",
+    "show_name": "潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站(大麦)",
+    "city": "深圳",
+    "result_match": "MADLOVE:ULTRA"
+  },
+  "params": {
+    "tier_priority": [
+      "¥380"
+    ],
+    "quantity": 1,
+    "attendees": 1,
+    "attendees_filled": true
+  },
+  "recipe": "recipes/panweibo-madlove-sz-damai.yaml",
+  "history": [
+    {
+      "ts": "2026-11-26 15:19:22",
+      "event": "created"
+    },
+    {
+      "ts": "2026-11-26 15:19:37",
+      "event": "armed"
+    },
+    {
+      "ts": "2026-11-26 15:20:27",
+      "event": "armed_ok"
+    }
+  ]
+}

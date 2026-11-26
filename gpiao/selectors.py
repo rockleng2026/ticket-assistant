@@ -54,7 +54,7 @@ KEY_TRANSLATE = {
     "resourceIdRegex": "resourceIdMatches",
 }
 
-SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton", "textNorm")
+SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton", "bottomWideButton", "textNorm")
 
 
 class SelectorError(Exception):
@@ -127,6 +127,10 @@ class Candidate:
     def is_bottom_button(self) -> bool:
         return bool(self.raw.get("bottomButton"))
 
+    @property
+    def is_bottom_wide_button(self) -> bool:
+        return bool(self.raw.get("bottomWideButton"))
+
     def build(self, device):
         """构造 uiautomator2 选择器对象。"""
         if self.is_coord:
@@ -197,6 +201,51 @@ def _find_bottom_button(device, screen_size) -> Optional[Match]:
     _, node, bounds, is_button = best
     return Match(
         candidate=Candidate(raw={"bottomButton": True}),
+        selector=None,
+        bounds=bounds,
+        clickable=True,
+        text=node.get("text", "") or "",
+        resource_id=node.get("resource-id", "") or "",
+    )
+
+
+def _find_bottom_wide_button(device, screen_size) -> Optional[Match]:
+    """找底部条里那个「最宽的大按钮」。
+
+    大麦的购买按钮（「已预约 / 立即购买」）是 canvas 绘制的：
+    既没有 text / content-desc，也没有 clickable=true，
+    但它是底部条里唯一一个很宽的元素。用「宽度 > 屏幕 45%」来认它。
+    """
+    try:
+        from lxml import etree
+
+        xml = device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+    w, h = screen_size
+    best = None
+    for node in root.iter("node"):
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if y1 < h * 0.85 or y2 > h:
+            continue
+        width = x2 - x1
+        if width < w * 0.45:
+            continue
+        # 取最靠下、且最宽的那个
+        key = (y1, width)
+        if best is None or key > best[0]:
+            best = (key, node, (x1, y1, x2, y2))
+    if best is None:
+        return None
+    _, node, bounds = best
+    return Match(
+        candidate=Candidate(raw={"bottomWideButton": True}),
         selector=None,
         bounds=bounds,
         clickable=True,
@@ -325,6 +374,12 @@ class Target:
                     matches.append(m)
                     break
                 continue
+            if cand.is_bottom_wide_button:
+                m = _find_bottom_wide_button(device, screen_size)
+                if m is not None:
+                    matches.append(m)
+                    break
+                continue
             try:
                 sel = cand.build(device)
             except SelectorError:
@@ -373,10 +428,17 @@ class Target:
                 break  # 命中一个候选就不再尝试后面的
         return matches
 
-    def find(self, device, screen_size=None) -> Optional[Match]:
+    def find(self, device, screen_size=None, allow_coord: bool = True) -> Optional[Match]:
+        """定位控件。
+
+        allow_coord=False 时**忽略坐标兜底**——否则 wait 永远立刻成功
+        （坐标候选是个"永远命中"的兜底，会造成假阳性）。
+        """
         if screen_size is None:
             screen_size = device.screen().size
         matches = self._iter_matches(device, screen_size)
+        if not allow_coord:
+            matches = [m for m in matches if not m.candidate.is_coord]
         if not matches:
             return None
         prefer = self.candidates[0].prefer if self.candidates else "first"
@@ -387,10 +449,11 @@ class Target:
         return self.find(device, screen_size) is not None
 
     def wait(self, device, timeout: Optional[float] = None, screen_size=None) -> Optional[Match]:
+        """等真实控件出现（忽略坐标兜底，避免假阳性）。"""
         timeout = self.timeout if timeout is None else timeout
         deadline = time.monotonic() + timeout
         while True:
-            m = self.find(device, screen_size)
+            m = self.find(device, screen_size, allow_coord=False)
             if m is not None:
                 return m
             if time.monotonic() >= deadline:
