@@ -251,16 +251,32 @@ class Device:
             pass
         return not self.keyguard_showing()
 
-    def set_lock_screen(self, enabled: bool) -> str:
-        """开关系统锁屏（需要设备未处于锁屏状态才生效）。
+    def set_lock_screen(self, enabled: bool) -> Tuple[str, bool]:
+        """开关系统锁屏。返回 (命令输出, 实际是否已生效)。
 
-        关掉之后脚本才能无人值守跑几个小时；用完记得 `set_lock_screen(True)` 恢复。
+        注意（Android 官方说明）：
+            "If the lock screen is secure, this has no immediate effect.
+             I.e. this can only change between Swipe and None."
+        也就是**设备设了 PIN/图案/指纹时，关不掉系统锁屏**。
+        这种情况下真正的护栏是：
+            - screen_off_timeout 设成最大值（屏幕永不熄灭 → keyguard 永不弹出）
+            - stay_on_while_plugged_in=1（充电时常亮）
+            - 开跑前自检发现被锁屏挡住就中止并提示手动解锁
         """
         cmd = ["adb", "-s", self.serial, "shell", "locksettings", "set-disabled",
                "false" if enabled else "true"]
         proc = subprocess.run(cmd, capture_output=True, timeout=15, check=False)
         out = (proc.stdout.decode("utf-8", "ignore") + proc.stderr.decode("utf-8", "ignore")).strip()
-        return out
+        state = self.lock_screen_disabled()
+        return out, state
+
+    def lock_screen_disabled(self) -> bool:
+        """系统锁屏是否已被真正关闭。"""
+        try:
+            out = shell_text(self._d, "locksettings get-disabled")
+            return out.strip().lower() == "true"
+        except Exception:  # noqa: BLE001
+            return False
 
     # ---------------- App 操作 ----------------
 

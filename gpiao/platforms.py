@@ -205,7 +205,6 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
             {
                 "action": "select_attendees",
                 "phase": "post",
-                "count": 1,
                 "entry": "需选择",
                 "confirm": "确认选择",
                 "optional": True,

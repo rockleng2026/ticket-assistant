@@ -230,13 +230,18 @@ class Recipe:
             raise ConfigError("单次购票数量超过 6 张，多数平台有上限")
 
     def to_dict(self) -> Dict[str, Any]:
+        sale_at = self.sale.at
+        if isinstance(sale_at, dt.datetime):
+            sale_at_text = sale_at.astimezone(self.sale.timezone).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            sale_at_text = self.sale.at_text
         return {
             "name": self.name,
             "platform": self.platform,
             "app": dataclasses.asdict(self.app),
             "concert": dataclasses.asdict(self.concert),
             "sale": {
-                "at": self.sale.at_text,
+                "at": sale_at_text,
                 "lead_seconds": self.sale.lead_seconds,
                 "burst_seconds": self.sale.burst_seconds,
                 "tap_interval_ms": self.sale.tap_interval_ms,

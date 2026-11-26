@@ -11,12 +11,12 @@ concert:
   session: null
   tier: null
   tier_priority:
-  - ¥680
-  quantity: 1
+  - ¥380
+  quantity: 2
   max_price: null
-  attendees: 1
+  attendees: 2
 sale:
-  at: '2026-01-01 12:00:00'
+  at: '2026-11-27 13:22:00'
   lead_seconds: 0.5
   burst_seconds: 8.0
   tap_interval_ms: 180
@@ -229,7 +229,7 @@ steps:
   steps:
   - action: select_tier
     priority:
-    - ¥680
+    - ¥380
     wait: 0.8
     settle: 0.35
     stable_wait: 0.6
@@ -245,7 +245,6 @@ steps:
     optional: true
 - action: select_attendees
   phase: post
-  count: 1
   entry: 需选择
   confirm: 确认选择
   optional: true

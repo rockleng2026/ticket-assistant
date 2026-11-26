@@ -469,11 +469,16 @@ python -m gpiao task rm <id>
 | USB 调试 | 开发者选项 → 打开 | 脚本靠它控制手机 |
 | USB 用途 | 下拉通知栏选「传输文件 / MTP」 | 只充电模式 ADB 可能不通 |
 | 免息屏 | 脚本自动设 `screen_off_timeout=最大值` + 充电常亮 | 息屏后所有点击失效 |
-| **系统锁屏** | `python -m gpiao lockscreen --disable` | ⚠ 有 PIN 的话脚本无法自动解锁，锁屏期间等于瞎子 |
+| **系统锁屏** | 有 PIN 就关不掉（见下） | 锁屏期间脚本等于瞎子 |
 
-> `lockscreen --disable` 会降低手机安全性，**抢完票请恢复**：
-> `python -m gpiao lockscreen --enable`
-> （需要手机处于解锁状态才生效，所以要先手动解锁一次）
+> **关于「关闭系统锁屏」**：`locksettings set-disabled true` 在**设了 PIN/图案/指纹**的
+> 设备上**不生效**（Android 官方原话：只能在 `Swipe` 和 `None` 之间切换）。
+> 脚本改用三件事兜底：
+> 1. `screen_off_timeout` = 最大值 → 屏幕永不熄灭 → keyguard 永不弹出
+> 2. `stay_on_while_plugged_in` = 1 → 插着电就常亮
+> 3. 开跑前自检发现被锁屏挡住 → **直接中止**并提示手动解锁
+>
+> `python -m gpiao lockscreen` 可以随时查当前状态。
 
 ### 每天开抢前（脚本会自己查）
 

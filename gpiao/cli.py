@@ -124,21 +124,27 @@ def cmd_connect(args) -> int:
 def cmd_lockscreen(args) -> int:
     """锁屏开关 / 状态查询。
 
-    抢票要连续跑 1 小时，手机必须保持解锁。
-    `--disable` 关闭系统锁屏（**会改变手机的安全设置，用完请恢复**）。
+    ⚠ Android 限制：设备设了 PIN/图案/指纹（安全锁屏）时，
+    `locksettings set-disabled` **不生效**（官方原话：只能在 Swipe 和 None 之间切）。
+    这种情况下脚本靠下面三件事保证不熄屏：
+        - screen_off_timeout = 最大值（屏幕永不熄灭 → keyguard 永不弹出）
+        - stay_on_while_plugged_in = 1（充电常亮）
+        - 开跑前自检发现被锁屏挡住就中止并提示手动解锁
     """
     device = _connect(None, args)
     locked = device.keyguard_showing()
-    print(f"当前锁屏状态: {'锁定中 ⚠' if locked else '未锁定 ✓'}")
-    if args.enable:
-        out = device.set_lock_screen(True)
-        print(f"已请求恢复系统锁屏: {out}")
-        print("注意：需要手机处于解锁状态才会立即生效")
-    elif args.disable:
-        out = device.set_lock_screen(False)
-        print(f"已请求关闭系统锁屏: {out}")
-        print("⚠ 这会降低手机安全性，抢完票请执行：")
-        print("   python -m gpiao lockscreen --enable")
+    disabled = device.lock_screen_disabled()
+    print(f"当前锁屏状态 : {'锁定中 ⚠' if locked else '未锁定 ✓'}")
+    print(f"系统锁屏开关 : {'已关闭' if disabled else '启用中（PIN 等安全锁屏无法通过 ADB 关闭）'}")
+
+    if args.enable or args.disable:
+        out, state = device.set_lock_screen(enabled=args.enable)
+        print(f"\n命令返回: {out}")
+        if state == (args.enable is False):
+            print("✓ 已生效")
+        else:
+            print("⚠ 未生效 —— 设备设了 PIN/图案/指纹时无法通过 ADB 关闭系统锁屏。")
+            print("  脚本靠「屏幕永不熄灭 + 充电常亮 + 开跑前自检」来兜底。")
     return 0
 
 
@@ -179,15 +185,6 @@ def cmd_task(args) -> int:
         from .platforms import build_recipe
         from .config import save_recipe
 
-        recipe = build_recipe(platform, name, keyword)
-        recipe.concert.tier_priority = prices
-        recipe.concert.quantity = int(args.qty)
-        recipe.concert.attendees = int(args.attendees if args.attendees is not None else args.qty)
-        if sale_at:
-            recipe.sale.at = sale_at
-        rpath = taskmod.recipe_path(root, task_id)
-        save_recipe(recipe, rpath)
-
         task = taskmod.Task(
             id=task_id,
             name=name,
@@ -210,8 +207,16 @@ def cmd_task(args) -> int:
                 "attendees": int(args.attendees if args.attendees is not None else args.qty),
                 "attendees_filled": bool(args.attendees_filled),
             },
-            recipe=str(rpath.relative_to(root)).replace("\\", "/"),
+            recipe=str(taskmod.recipe_path(root, task_id).relative_to(root)).replace("\\", "/"),
         )
+
+        # 按平台模板生成配方，并把任务参数同步进去
+        # （价格优先级要同时写进 loop 里的 select_tier.priority）
+        recipe = build_recipe(platform, name, keyword)
+        taskmod.apply_params_to_recipe(recipe, task)
+        rpath = taskmod.recipe_path(root, task_id)
+        save_recipe(recipe, rpath)
+
         task.log("created")
         p = taskmod.save_task(root, task)
         print(f"✓ 任务已创建: {task_id}")

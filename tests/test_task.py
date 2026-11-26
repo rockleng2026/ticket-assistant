@@ -6,7 +6,7 @@ import datetime as dt
 import json
 from pathlib import Path
 
-from gpiao.config import CST
+from gpiao.config import CST, load_recipe
 from gpiao.platforms import build_recipe
 from gpiao.task import (
     Schedule,
@@ -121,6 +121,27 @@ def test_apply_params_to_recipe():
                 if inner.get("action") == "select_tier":
                     found = inner["priority"]
     assert found == ["¥680", "¥480"]
+
+
+def test_recipe_to_dict_writes_updated_sale_time(tmp_path: Path):
+    """改了 sale.at 之后要真的写进 YAML（曾经只写了旧的 at_text）。"""
+    from gpiao.config import save_recipe
+
+    recipe = build_recipe("meituan", "测试", "关键词")
+    recipe.sale.at = dt.datetime(2026, 11, 27, 13, 22, tzinfo=CST)
+    p = tmp_path / "r.yaml"
+    save_recipe(recipe, p)
+    again = load_recipe(p)
+    assert again.sale.at == dt.datetime(2026, 11, 27, 13, 22, tzinfo=CST)
+    assert "2026-11-27 13:22:00" in p.read_text(encoding="utf-8")
+
+
+def test_attendee_count_not_hardcoded():
+    """观演人数必须跟着 concert.attendees 走，不能写死在步骤里。"""
+    r = build_recipe("meituan", "测试", "关键词")
+    for step in r.steps:
+        if step.get("action") == "select_attendees":
+            assert "count" not in step
 
 
 # --------------------------------------------------------------------------- #
