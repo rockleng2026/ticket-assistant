@@ -77,15 +77,16 @@ class ConcertConfig:
             tier_priority = ["¥680", "¥480", "¥880"]
         if isinstance(tier_priority, str):
             tier_priority = [p.strip() for p in tier_priority.split(",") if p.strip()]
+        qty = int(raw.get("quantity", 1))
         return cls(
             name=raw.get("name", ""),
             search_keyword=raw.get("search_keyword", ""),
             session=raw.get("session"),
             tier=raw.get("tier"),
             tier_priority=list(tier_priority),
-            quantity=int(raw.get("quantity", 1)),
+            quantity=qty,
             max_price=raw.get("max_price"),
-            attendees=int(raw.get("attendees", raw.get("quantity", 1))),
+            attendees=int(raw.get("attendees", qty)),
         )
 
 
@@ -252,6 +253,11 @@ class Recipe:
             raise ConfigError("concert.quantity 必须 >= 1")
         if self.concert.quantity > 6:
             raise ConfigError("单次购票数量超过 6 张，多数平台有上限")
+        # 票数必须和观演人位数一一对应（实名制）
+        if self.concert.attendees != self.concert.quantity:
+            raise ConfigError(
+                f"票数({self.concert.quantity}) 与观演人数({self.concert.attendees}) 不一致"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         sale_at = self.sale.at

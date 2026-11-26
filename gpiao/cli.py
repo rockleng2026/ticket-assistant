@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
+
 from pathlib import Path
 from typing import List, Optional
 
@@ -176,6 +178,8 @@ def cmd_task(args) -> int:
             from .config import _parse_datetime
 
             sale_at = _parse_datetime(args.at, _CST)
+
+
         task_id = args.id or taskmod.slugify(f"{keyword}-{platform}")
         exists = (taskmod.tasks_dir(root) / f"{task_id}.json").exists()
         if exists and not args.force:
@@ -224,8 +228,9 @@ def cmd_task(args) -> int:
         print(f"  配方文件 {task.recipe}")
         print(f"  开售时间 {task.sale_text()}  |  距开抢 {task.countdown_text()}")
         print(f"  价格 {' > '.join(prices)}  |  数量 {task.params['quantity']} 张"
-              f"  |  观演人 {task.params['attendees']} 位"
-              f"（{'已预填' if task.params['attendees_filled'] else '未预填'}）")
+              f"  |  观演人 {task.params['attendees']} 位")
+        print(f"  观演人预填: {'已预填' if task.params['attendees_filled'] else '未预填'}")
+
         print(f"\n开抢前 1 小时执行：  python -m gpiao task resume {task_id}")
         return 0
 
@@ -276,6 +281,7 @@ def cmd_task(args) -> int:
               f"  |  数量 {t.params.get('quantity')} 张")
         if not t.params.get("attendees_filled"):
             print("  ⚠ 观演人未标记为已预填 —— 实名制演唱会会卡在支付前一步")
+
 
         # resume：开抢前 prepare_lead_minutes 分钟就该把设备摆好
         if action == "resume" and t.schedule.sale_at and not args.arm_only:
@@ -756,12 +762,13 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--city", default="深圳")
     c.add_argument("--price", required=True, help="价格优先级，如 680 或 680,480,880")
     c.add_argument("--qty", type=int, default=1, help="购票数量")
-    c.add_argument("--attendees", type=int, default=None, help="实名观演人位数")
+    c.add_argument("--attendees", type=int, default=None, help="实名观演人位数（须等于票数）")
     c.add_argument(
         "--attendees-filled",
         action="store_true",
         help="确认实名观演人已在 App 里预填写完毕",
     )
+
     c.add_argument("--at", help="开售时间，如 2026-11-27 13:22:00")
     c.add_argument("--prepare-lead", type=int, default=60, help="开抢前多少分钟开始准备")
     c.add_argument("--lead", type=float, default=0.5, help="到点提前量（秒）")

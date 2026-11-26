@@ -643,66 +643,6 @@ def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
 
 
 
-def _find_attendee_circles(ctx: FlowContext, size):
-    """找出订单页上每个实名观演人的勾选圈。
-
-    勾选圈是画出来的图标：没有 text / desc / checked 属性。
-    锚点用「身份证 xxx」这一行（每个观演人必有一行），圈就在它同一行右侧，
-    比用「实名观演人」标题定位可靠得多（标题找不到时不会误判）。
-
-    返回 [(x, y), ...]，按从上到下排序。
-    """
-    try:
-        from lxml import etree
-    except Exception:  # noqa: BLE001
-        return []
-
-    try:
-        xml = ctx.device.u2.dump_hierarchy()
-        root = etree.fromstring(xml.encode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return []
-
-    w, h = size
-    # 观演人行：以「身份证」文本为锚
-    row_ys = []
-    for node in root.iter("node"):
-        t = (node.get("text", "") or "").strip()
-        if "身份证" not in t:
-            continue
-        b = node.get("bounds", "") or ""
-        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
-        if not m:
-            continue
-        x1, y1, x2, y2 = (int(g) for g in m.groups())
-        if x1 > w * 0.4:      # 身份证那行是左对齐的
-            continue
-        row_ys.append((y1 + y2) // 2)
-    if not row_ys:
-        return []
-
-    circles = []
-    for node in root.iter("node"):
-        cls = node.get("class", "") or ""
-        if not (cls.endswith("ImageView") or cls.endswith("Image")):
-            continue
-        b = node.get("bounds", "") or ""
-        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
-        if not m:
-            continue
-        x1, y1, x2, y2 = (int(g) for g in m.groups())
-        if x1 < w * 0.75:
-            continue
-        if not (40 <= (x2 - x1) <= 160 and 40 <= (y2 - y1) <= 160):
-            continue
-        cy = (y1 + y2) // 2
-        # 圈和身份证行同高（允许上下 70px 的偏差）
-        if not any(abs(cy - ry) <= 70 for ry in row_ys):
-            continue
-        circles.append(((x1 + x2) // 2, cy))
-    return sorted(circles, key=lambda c: c[1])
-
-
 def _is_red(ctx: FlowContext, point, radius: int = 45) -> bool:
     """像素判断勾选圈是不是「已勾选」（红色实心）。"""
     try:
@@ -727,50 +667,141 @@ def _is_red(ctx: FlowContext, point, radius: int = 45) -> bool:
     return red / len(px) >= 0.02
 
 
+def _parse_attendees(ctx: FlowContext, size):
+    """解析订单页上的实名观演人列表。
+
+    返回 [{"name": 名字, "circle": (x, y), "checked": bool}, ...]
+    观演人行的锚点是「身份证 xxx」文本（每个观演人必有一行），
+    勾选圈在同一行右侧；名字是该行左侧的短文本。
+    """
+    try:
+        from lxml import etree
+    except Exception:  # noqa: BLE001
+        return []
+
+    try:
+        xml = ctx.device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+
+    w, h = size
+    rows = []
+    for node in root.iter("node"):
+        t = (node.get("text", "") or "").strip()
+        if "身份证" not in t:
+            continue
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if x1 > w * 0.4:
+            continue
+        rows.append({"y": (y1 + y2) // 2, "texts": []})
+
+    if not rows:
+        return []
+
+    # 收集左侧可能的姓名文本
+    for node in root.iter("node"):
+        t = (node.get("text", "") or "").strip()
+        if not t or "身份证" in t:
+            continue
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if x1 > w * 0.35 or len(t) > 12:
+            continue
+        cy = (y1 + y2) // 2
+        for row in rows:
+            if abs(cy - row["y"]) <= 70:
+                row["texts"].append(t)
+                break
+
+    # 收集右侧的勾选圈
+    circles = []
+    for node in root.iter("node"):
+        cls = node.get("class", "") or ""
+        if not (cls.endswith("ImageView") or cls.endswith("Image")):
+            continue
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if x1 < w * 0.75:
+            continue
+        if not (40 <= (x2 - x1) <= 160 and 40 <= (y2 - y1) <= 160):
+            continue
+        circles.append(((x1 + x2) // 2, (y1 + y2) // 2))
+
+    out = []
+    for row in rows:
+        circle = None
+        for c in circles:
+            if abs(c[1] - row["y"]) <= 70:
+                circle = c
+                break
+        if circle is None:
+            continue
+        # 名字取该行最靠上的短文本（默认 tag「默认」不算名字）
+        name = ""
+        for t in row["texts"]:
+            if t in ("默认", "已选", "常用"):
+                continue
+            name = t.lstrip("*").strip()
+            break
+        out.append({"name": name, "circle": circle, "checked": _is_red(ctx, circle)})
+    return out
+
+
 def _act_select_attendees(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
-    """校验/补选实名观演人。
+    """勾选实名观演人（按数量，不按名字）。
 
-    订单页（标题「确认购票」）上，每个观演人右侧有一个圆形勾选框：
-    红圈 = 已选，空圈 = 未选。票数 N 就必须勾满 N 个，否则「立即支付」点不动。
+    票数 N 就必须勾满 N 个，否则「立即支付」点不动。
+    App 的观演人列表由用户自己维护（买几票就只留那几个人），
+    所以这里**不按名字/证件号匹配**，只管把空圈勾满。
 
-    页面上的「需选择 N 位」是**总位数**（不是"还差几位"），
-    所以判定方式只能是"数红圈"：
-      * 红圈数 >= 票数 -> 直接走（快路径，一次截图判断）
-      * 红圈数不足     -> 点空圈补选，再复核一次
+    名字只用于日志报告，方便肉眼核对勾的是不是对的人。
     """
     required = int(step.get("count", ctx.recipe.concert.attendees))
     size = ctx.screen_size()
 
     def state():
-        circles = _find_attendee_circles(ctx, size)
-        checked = [c for c in circles if _is_red(ctx, c)]
-        return circles, checked
+        return _parse_attendees(ctx, size)
 
-    circles, checked = state()
-    if not circles:
-        _log_step(ctx, "实名观演人: 没找到勾选圈（页面可能还没到订单页）")
-        return StepResult("select_attendees", True, "no-circles")
+    people = state()
+    if not people:
+        _log_step(ctx, "实名观演人: 没解析到观演人列表（页面可能还没到订单页）")
+        return StepResult("select_attendees", True, "no-people")
 
-    _log_step(ctx, f"实名观演人: 共 {len(circles)} 位，已选 {len(checked)} 位（需要 {required} 位）")
-    if len(checked) >= required:
-        return StepResult("select_attendees", True, str(len(checked)))
+    def desc(pls):
+        return "，".join(f"{p['name'] or '?'}{'✓' if p['checked'] else '✗'}" for p in pls)
 
-    # 补选：点空圈
-    for c in circles:
+    _log_step(ctx, f"实名观演人: {desc(people)}（需要 {required} 位）")
+
+    people = state()
+    checked = [p for p in people if p["checked"]]
+    for p in people:
         if len(checked) >= required:
             break
-        if _is_red(ctx, c):
+        if p["checked"]:
             continue
-        _log_step(ctx, f"勾选观演人 @({c[0]},{c[1]})")
-        ctx.device.click(*c)
+        _log_step(ctx, f"勾选 {p['name'] or '?'} @({p['circle'][0]},{p['circle'][1]})")
+        ctx.device.click(*p["circle"])
         time.sleep(0.45)
+        checked.append(p)
 
-    circles, checked = state()
+    people = state()
+    checked = [p for p in people if p["checked"]]
     ok = len(checked) >= required
-    _log_step(ctx, f"实名观演人: 补选后已选 {len(checked)}/{required} 位")
+    _log_step(ctx, f"实名观演人: 最终勾选 {len(checked)}/{required} 位 -> {desc(checked)}")
     _safe_shot(ctx, "attendee-result")
     if not ok:
-        _log_step(ctx, "实名观演人: 数量不足 —— App 里可能没存够观演人信息")
+        _log_step(ctx, "实名观演人: 数量不足 —— App 里存的人不够，检查观演人列表")
     return StepResult("select_attendees", ok, str(len(checked)))
 
 
