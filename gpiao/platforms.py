@@ -110,6 +110,7 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
             },
         },
         "steps": [
+            {"action": "wake", "phase": "pre"},
             {"action": "launch", "phase": "pre", "settle": 5.0},
             {
                 "action": "dismiss",
@@ -287,6 +288,7 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
             "logged_out_marker": {"candidates": [{"textContains": "登录"}]},
         },
         "steps": [
+            {"action": "wake", "phase": "pre"},
             {"action": "launch", "phase": "pre", "settle": 6.0},
             {"action": "wait", "phase": "pre", "target": "search_entry", "timeout": 20},
             {"action": "tap", "phase": "pre", "target": "search_entry", "settle": 2.0},

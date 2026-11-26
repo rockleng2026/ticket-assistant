@@ -115,6 +115,8 @@ selectors:
     - textContains: 去登录
     - textContains: 登录后
 steps:
+- action: wake
+  phase: pre
 - action: launch
   phase: pre
   settle: 5.0

@@ -72,6 +72,9 @@ class FakeDevice:
     logs: List[str] = field(default_factory=list)
     # 每次查询后要变成的样子（模拟页面跳转）
     on_tap: Optional[Dict[str, Any]] = None
+    # 模拟锁屏
+    locked: bool = False
+    screen_on: bool = True
 
     def screen(self):
         from gpiao.device import ScreenInfo

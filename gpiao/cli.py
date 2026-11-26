@@ -121,7 +121,29 @@ def cmd_connect(args) -> int:
     return 0
 
 
+def cmd_lockscreen(args) -> int:
+    """锁屏开关 / 状态查询。
+
+    抢票要连续跑 1 小时，手机必须保持解锁。
+    `--disable` 关闭系统锁屏（**会改变手机的安全设置，用完请恢复**）。
+    """
+    device = _connect(None, args)
+    locked = device.keyguard_showing()
+    print(f"当前锁屏状态: {'锁定中 ⚠' if locked else '未锁定 ✓'}")
+    if args.enable:
+        out = device.set_lock_screen(True)
+        print(f"已请求恢复系统锁屏: {out}")
+        print("注意：需要手机处于解锁状态才会立即生效")
+    elif args.disable:
+        out = device.set_lock_screen(False)
+        print(f"已请求关闭系统锁屏: {out}")
+        print("⚠ 这会降低手机安全性，抢完票请执行：")
+        print("   python -m gpiao lockscreen --enable")
+    return 0
+
+
 def cmd_task(args) -> int:
+
     """任务管理：create / list / show / resume / run / rm。"""
     from . import task as taskmod
 
@@ -271,7 +293,30 @@ def cmd_task(args) -> int:
         t.log("armed")
         taskmod.save_task(root, t)
 
+        # 开跑前自检：锁屏 / 登录 / 时钟
+        print("\n▶ 开跑前自检")
+        ok = True
+        locked = device.keyguard_showing()
+        if locked:
+            print("  ✗ 手机处于锁屏状态 —— 脚本看不到界面，所有点击都会失效")
+            print("    解锁手机，或执行：python -m gpiao lockscreen --disable")
+            ok = False
+        else:
+            print("  ✓ 无锁屏阻挡")
+        try:
+            skew = device.clock_skew()
+            if abs(skew) > 0.5:
+                print(f"  ⚠ 设备时钟与电脑相差 {skew:+.2f}s，建议先对时")
+            else:
+                print(f"  ✓ 设备时钟偏差 {skew:+.2f}s")
+        except Exception:  # noqa: BLE001
+            pass
+        if not ok and not args.force:
+            print("\n自检未通过，已中止。确认无误可加 --force 强行继续。")
+            return 2
+
         print("\n▶ 准备阶段")
+
         run_steps(ctx, recipe.steps, phase="pre")
         device.screenshot("armed")
         t.status = "armed"
@@ -667,8 +712,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--code", help="6 位配对码，省略则交互输入")
     sp.set_defaults(func=cmd_connect)
 
+    sp = sub.add_parser("lockscreen", help="锁屏状态查询 / 开关（无人值守跑必须解锁）")
+    sp.add_argument("--disable", action="store_true", help="关闭系统锁屏（抓完票记得恢复）")
+    sp.add_argument("--enable", action="store_true", help="恢复系统锁屏")
+    sp.add_argument("--serial")
+    sp.add_argument("--connect")
+    sp.set_defaults(func=cmd_lockscreen)
+
     # ---------------- task ----------------
     sp = sub.add_parser("task", help="抢票任务：create / list / show / resume / run / rm")
+
     tsp = sp.add_subparsers(dest="task_action", required=True)
 
     c = tsp.add_parser("create", help="创建抢票任务（现在建，开抢前再来跑）")
@@ -705,6 +758,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--skip-wait", action="store_true", help="不等待，立即触发")
     c.add_argument("--wait-now", action="store_true", help="还没到准备时间就原地等待")
     c.add_argument("--arm-only", action="store_true", help="只做准备阶段，不等待不抢购")
+    c.add_argument("--force", action="store_true", help="自检不通过也强行继续")
     c.set_defaults(func=cmd_task)
 
     c = tsp.add_parser("run", help="立刻执行任务（不等准备时间）")

@@ -720,6 +720,38 @@ def _select_unchecked_boxes(ctx: FlowContext, size) -> None:
             _log_step(ctx, f"勾选观演人行 @y={cy}")
 
 
+def _act_wake(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
+    """点亮屏幕并确保没有被锁屏挡住。
+
+    锁屏（PIN/指纹）时 uiautomator 只能看到「输入密码」，所有查找都会失败，
+    所以这一项必须在流程最前面做；解锁不了就直接失败，别等到开票才发现。
+    """
+    device = ctx.device
+    device.wake_up()
+    locked = False
+    if hasattr(device, "keyguard_showing"):
+        locked = device.keyguard_showing()
+    if not locked:
+        _log_step(ctx, "屏幕已点亮，无锁屏阻挡")
+        return StepResult("wake", True, "awake")
+
+    unlocked = False
+    if hasattr(device, "unlock") and step.get("try_unlock", True):
+        unlocked = device.unlock()
+    if unlocked:
+        _log_step(ctx, "已自动解除锁屏")
+        return StepResult("wake", True, "unlocked")
+
+    msg = step.get(
+        "message",
+        "手机被锁屏挡住了，脚本无法操作。请解锁手机；"
+        "或执行 `python -m gpiao lockscreen --disable` 关闭系统锁屏（用完记得恢复）。",
+    )
+    _log_step(ctx, f"⚠ {msg}")
+    _safe_shot(ctx, "keyguard-blocked")
+    return StepResult("wake", False, "locked")
+
+
 def _act_scroll_top(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     """把页面滚回顶部。
 
@@ -808,6 +840,7 @@ ACTIONS = {
     "scroll_to": _act_scroll_to,
     "scroll_until": _act_scroll_until,
     "scroll_top": _act_scroll_top,
+    "wake": _act_wake,
     "back": _act_back,
     "select": _act_select,
     "select_tier": _act_select_tier,

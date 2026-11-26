@@ -189,14 +189,78 @@ class Device:
             pass
 
     def wake_up(self) -> None:
+        """点亮屏幕并尝试拉起应用。"""
         try:
-            if self._d.info.get("screenOn") is False:
-                self._d.wake()
+            if not self._d.info.get("screenOn"):
+                self._d.screen_on()
                 time.sleep(0.6)
-                self._d.press("home")
-                time.sleep(0.3)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            self._d.press("home")
+            time.sleep(0.3)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ---------------- 锁屏 ----------------
+
+    def keyguard_showing(self) -> bool:
+        """当前是否被锁屏（PIN/指纹/图案）挡住。"""
+        try:
+            out = shell_text(self._d, "dumpsys window")
+        except Exception:  # noqa: BLE001
+            return False
+        for line in out.splitlines():
+            if "isKeyguardShowing=true" in line or "mShowingLockscreen=true" in line:
+                return True
+        return False
+
+    def unlock(self) -> bool:
+        """尝试自动解锁。
+
+        * 屏幕没亮先点亮
+        * `wm dismiss-keyguard`（无密码锁屏可以）
+        * 向上滑动（滑开非安全锁屏）
+        有 PIN/指纹的安全锁屏无法自动解锁，返回 False。
+        """
+        try:
+            if not self._d.info.get("screenOn"):
+                self._d.screen_on()
+                time.sleep(0.8)
+        except Exception:  # noqa: BLE001
+            pass
+        for cmd in ("wm dismiss-keyguard", "input keyevent 224"):
+            try:
+                subprocess.run(
+                    ["adb", "-s", self.serial, "shell", *cmd.split()],
+                    capture_output=True,
+                    timeout=8,
+                    check=False,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.8)
+            if not self.keyguard_showing():
+                return True
+        # 再试着滑一下（非安全锁屏）
+        try:
+            w, h = self.screen().size
+            self._d.swipe(w // 2, int(h * 0.85), w // 2, int(h * 0.25), 0.25)
+            time.sleep(1.0)
+        except Exception:  # noqa: BLE001
+            pass
+        return not self.keyguard_showing()
+
+    def set_lock_screen(self, enabled: bool) -> str:
+        """开关系统锁屏（需要设备未处于锁屏状态才生效）。
+
+        关掉之后脚本才能无人值守跑几个小时；用完记得 `set_lock_screen(True)` 恢复。
+        """
+        cmd = ["adb", "-s", self.serial, "shell", "locksettings", "set-disabled",
+               "false" if enabled else "true"]
+        proc = subprocess.run(cmd, capture_output=True, timeout=15, check=False)
+        out = (proc.stdout.decode("utf-8", "ignore") + proc.stderr.decode("utf-8", "ignore")).strip()
+        return out
 
     # ---------------- App 操作 ----------------
 
