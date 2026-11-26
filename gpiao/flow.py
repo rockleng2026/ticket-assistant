@@ -515,6 +515,28 @@ def _page_has(ctx: FlowContext, text: str) -> bool:
             return False
 
 
+def _wait_stable(target: Target, device, max_wait: float = 0.6) -> None:
+    """等目标的位置稳定下来再点。
+
+    购票面板是底部弹层，弹出时有个上滑动画。动画没结束就按坐标点，
+    会打在旧位置上——表现就是"点了没反应"，很容易被误判成"没票"。
+    """
+    deadline = time.monotonic() + max_wait
+    last = None
+    stable = 0
+    while time.monotonic() < deadline:
+        m = target.find(device)
+        cur = m.bounds if m else None
+        if cur is not None and cur == last:
+            stable += 1
+            if stable >= 2:
+                return
+        else:
+            stable = 0
+        last = cur
+        time.sleep(0.1)
+
+
 def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     """按优先级逐个尝试票档：680 → 480 → 880。
 
@@ -528,7 +550,7 @@ def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     priority = step.get("priority") or ctx.recipe.concert.tier_priority
     size = ctx.screen_size()
     wait = float(step.get("wait", 1.2))          # 只等首个候选出现
-    settle = float(step.get("settle", 0.4))
+    settle = float(step.get("settle", 0.35))
     budget = float(step.get("total_budget", 5.0))
 
     # 从游标继续：上一轮已经试过并且失败的档不再重复浪费时间
@@ -548,13 +570,26 @@ def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
         if found is None:
             _log_step(ctx, f"票档 {price}: 本场次没有该档，换下一档")
             continue
+
+        # 等弹层动画结束，位置稳定了再点
+        _wait_stable(target, ctx.device, float(step.get("stable_wait", 0.6)))
+
         target.click(ctx.device, size)
         time.sleep(settle)
-        # 轻量校验：选中后才会出现「数量」行
         if _page_has(ctx, "数量"):
             ctx.tier_cursor = idx + 1
             _log_step(ctx, f"票档 {price}: 选中成功")
             return StepResult("select_tier", True, price)
+
+        # 可能是动画没赶上（点空了），再点一次再判定
+        time.sleep(0.15)
+        target.click(ctx.device, size)
+        time.sleep(settle)
+        if _page_has(ctx, "数量"):
+            ctx.tier_cursor = idx + 1
+            _log_step(ctx, f"票档 {price}: 选中成功（补点一次）")
+            return StepResult("select_tier", True, price)
+
         _log_step(ctx, f"票档 {price}: 无票/点不动，立即换下一档")
     _safe_shot(ctx, "select-tier-fail")
     return StepResult("select_tier", False, ",".join(str(p) for p in priority))

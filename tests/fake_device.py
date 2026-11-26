@@ -78,6 +78,37 @@ class FakeDevice:
 
         return ScreenInfo(width=self.screen_size[0], height=self.screen_size[1])
 
+    @property
+    def u2(self):
+        """模拟 uiautomator2 原始对象（选择器构造入口）。"""
+        return self
+
+    def tap(self, x: int, y: int) -> None:
+        self.click(x, y)
+
+    def dump_hierarchy(self) -> str:
+        import xml.sax.saxutils as sax
+
+        parts = []
+        for n in self.nodes:
+            x1, y1, x2, y2 = n.bounds
+            parts.append(
+                '<node text="{t}" content-desc="{d}" resource-id="{r}" class="{c}" '
+                'clickable="{cl}" enabled="true" '
+                'bounds="[{x1},{y1}][{x2},{y2}]" />'.format(
+                    t=sax.escape(n.text),
+                    d=sax.escape(n.desc),
+                    r=n.resourceId,
+                    c=n.className,
+                    cl="true" if n.clickable else "false",
+                    x1=x1,
+                    y1=y1,
+                    x2=x2,
+                    y2=y2,
+                )
+            )
+        return '<hierarchy>' + "".join(parts) + "</hierarchy>"
+
     def __call__(self, **kwargs) -> FakeSelector:
         matched = []
         for node in self.nodes:

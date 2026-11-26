@@ -54,7 +54,7 @@ KEY_TRANSLATE = {
     "resourceIdRegex": "resourceIdMatches",
 }
 
-SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope")
+SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton")
 
 
 class SelectorError(Exception):
@@ -123,6 +123,10 @@ class Candidate:
     def is_coord(self) -> bool:
         return "coord" in self.raw
 
+    @property
+    def is_bottom_button(self) -> bool:
+        return bool(self.raw.get("bottomButton"))
+
     def build(self, device):
         """构造 uiautomator2 选择器对象。"""
         if self.is_coord:
@@ -149,6 +153,51 @@ class Candidate:
             return f"coord@{self.raw['coord']}"
         parts = [f"{k}={v!r}" for k, v in self.raw.items() if k not in SPECIAL_KEYS]
         return ",".join(parts) or "?"
+
+
+def _find_bottom_button(device, screen_size) -> Optional[Match]:
+    """找屏幕最底部的按钮（android.widget.Button / 可点元素）。
+
+    国内 App 的主按钮文案经常是动态的（例如「已减0.45元，月付交易」、
+    「确认支付 ￥479.55」），按文案匹配很脆；"最底下那个按钮" 才是稳定锚点。
+    """
+    try:
+        from lxml import etree
+
+        xml = device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+    w, h = screen_size
+    best = None
+    for node in root.iter("node"):
+        cls = node.get("class", "") or ""
+        bounds = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", bounds)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if y1 < h * 0.72:
+            continue
+        is_button = cls.endswith("Button")
+        clickable = node.get("clickable") == "true"
+        if not (is_button or clickable):
+            continue
+        score = y1 + (100000 if is_button else 0)
+        if best is None or score > best[0]:
+            best = (score, node, (x1, y1, x2, y2), is_button)
+    if best is None:
+        return None
+    _, node, bounds, is_button = best
+    return Match(
+        candidate=Candidate(raw={"bottomButton": True}),
+        selector=None,
+        bounds=bounds,
+        clickable=True,
+        text=node.get("text", "") or "",
+        resource_id=node.get("resource-id", "") or "",
+    )
 
 
 @dataclass
@@ -265,6 +314,12 @@ class Target:
                     )
                 )
                 break
+            if cand.is_bottom_button:
+                m = _find_bottom_button(device, screen_size)
+                if m is not None:
+                    matches.append(m)
+                    break
+                continue
             try:
                 sel = cand.build(device)
             except SelectorError:

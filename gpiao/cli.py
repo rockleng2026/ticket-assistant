@@ -304,6 +304,14 @@ def cmd_record(args) -> int:
 
 def cmd_arm(args) -> int:
     recipe = load_recipe(Path(args.recipe))
+    if not args.yes:
+        from .ask import ask, save as save_ask
+
+        recipe, cont = ask(recipe, interactive=True)
+        if not cont:
+            print("已取消")
+            return 1
+        save_ask(recipe, Path(args.recipe))
     recorder = RunRecorder(RUNS_DIR, tag="arm")
     setup_logging(args.verbose, RUNS_DIR / "gpiao.log")
     device = _connect(recipe, args)
@@ -324,6 +332,16 @@ def cmd_run(args) -> int:
     if recipe.sale.at is None:
         print("配方没有设置 sale.at，无法定时触发")
         return 1
+
+    # 开跑前确认 价格 / 数量 / 观演人
+    if not args.yes:
+        from .ask import ask, save as save_ask
+
+        recipe, cont = ask(recipe, interactive=True)
+        if not cont:
+            print("已取消")
+            return 1
+        save_ask(recipe, Path(args.recipe))
 
     recorder = RunRecorder(RUNS_DIR, tag="run")
     setup_logging(args.verbose, RUNS_DIR / "gpiao.log")
@@ -476,6 +494,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-r", "--recipe", required=True)
     sp.add_argument("--serial")
     sp.add_argument("--connect")
+    sp.add_argument("--yes", "-y", action="store_true", help="跳过开跑前的参数问询")
     sp.set_defaults(func=cmd_arm)
 
     sp = sub.add_parser("run", help="准备 + 等待 + 到点抢")
@@ -483,6 +502,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--serial")
     sp.add_argument("--connect")
     sp.add_argument("--skip-wait", action="store_true", help="不等待，立即触发（演练用）")
+    sp.add_argument("--yes", "-y", action="store_true", help="跳过开跑前的参数问询")
     sp.set_defaults(func=cmd_run)
 
     sp = sub.add_parser("fire", help="直接执行到点抢购（设备已就位）")

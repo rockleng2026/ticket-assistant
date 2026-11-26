@@ -45,6 +45,10 @@ device:
   auto_prepare: true
 
 stop_before_payment: true
+# submit_order=true：允许点「立即支付」生成订单（锁票 15 分钟）
+# auto_pay=false：不自动完成付款，订单页出来你自己点支付
+submit_order: true
+auto_pay: false
 
 # ---------------------------------------------------------------------------
 # 控件选择器
@@ -163,13 +167,14 @@ selectors:
       - textContains: 立即支付
     aliases: []
 
-  # 支付方式弹层里的最终确认
+  # 支付方式弹层里的最终确认（文案动态，用"屏幕最底按钮"兜底）
   pay_confirm:
     candidates:
-      - text: 确认支付
-      - text: 确认付款
-      - text: 立即支付
-      - text: 立即付款
+      - textContains: 月付交易
+      - textContains: 确认支付
+      - textContains: 立即支付
+      - textContains: 去支付
+      - bottomButton: true
     aliases: []
 
   # 登录态标志：未登录时首页/详情页会出现「去登录」「登录后...」等字样
@@ -290,12 +295,6 @@ steps:
     target: buy_button
     timeout: 25
 
-  # 弹层清干净后确认购买按钮在位
-  - action: wait
-    phase: pre
-    target: buy_button
-    timeout: 25
-
   # 确认设备已登录，否则到点也买不了
   - action: require
     phase: pre
@@ -321,13 +320,15 @@ steps:
       - 我已阅读并同意
       - 知道了
 
-  # ---------- 抢到后（热路径，每一步都尽量快） ----------
-  - action: select
-    phase: post
-    target: session_item
-    timeout: 1.5
-    settle: 0.3
-    optional: true
+  # ---------- 抢到后（热路径：每一步都压到最短） ----------
+  # 注意：本场只有一个场次，购票面板默认已选中 2026-11-28 19:00。
+  # 多场次的演出需要在这里加一步 select session_item（点错会取消选中，反而更慢）。
+  # - action: select
+  #   phase: post
+  #   target: session_item
+  #   timeout: 0.8
+  #   settle: 0.15
+  #   optional: true
 
   # 选票档 + 选数量 + 确认 —— 这组步骤整体重试：
   #   这一档没票 → select_tier 自动换优先级里的下一档 → 重新走一遍确认流程
@@ -339,8 +340,9 @@ steps:
     steps:
       - action: select_tier
         priority: ["¥680", "¥480", "¥880"]
-        wait: 1.2
-        settle: 0.4
+        wait: 0.8
+        settle: 0.35
+        stable_wait: 0.6
         total_budget: 4.0
         optional: true
       - action: select_quantity
@@ -349,10 +351,10 @@ steps:
         optional: true
       - action: tap
         target: confirm_button
-        settle: 2.5
+        settle: 1.0
         optional: true
 
-  # 实名观演人：快路径只是一次查询（~45ms），已满足就立刻继续
+  # 实名观演人：快路径只是一次选择器查询（~45ms），已满足就立刻继续
   - action: select_attendees
     phase: post
     count: 1
@@ -360,14 +362,23 @@ steps:
     confirm: 确认选择
     optional: true
 
-  # 点「立即支付」才会真正生成订单（真金白银），受 auto_pay 开关控制
+  # 点「立即支付」会真正生成订单（锁票 15 分钟）。
+  # 支付本身不自动化：订单页出来后你自己点支付即可。
   - action: tap
     phase: post
     target: pay_button
+    settle: 1.8
+    requires_submit: true
+    optional: true
+
+  # 要自动完成付款时把配方里的 auto_pay 改成 true（会真的扣钱！）
+  - action: tap
+    phase: post
+    target: pay_confirm
     settle: 3.0
     requires_pay: true
     optional: true
 
   - action: stop
     phase: post
-    message: 已进入支付环节，请核对金额与观演人信息后手动完成支付
+    message: 已生成订单并进入支付页，请核对金额与观演人信息后手动支付
