@@ -305,10 +305,11 @@ def cmd_task(args) -> int:
             print("  ✓ 无锁屏阻挡")
         try:
             skew = device.clock_skew()
-            if abs(skew) > 0.5:
-                print(f"  ⚠ 设备时钟与电脑相差 {skew:+.2f}s，建议先对时")
+            if abs(skew) > 1.5:
+                print(f"  ⚠ 设备时钟与电脑相差 {skew:+.2f}s（只影响 App 自己显示的倒计时，")
+                print("     不影响脚本触发 —— 脚本用的是电脑的 NTP 时钟）")
             else:
-                print(f"  ✓ 设备时钟偏差 {skew:+.2f}s")
+                print(f"  ✓ 设备时钟偏差 {skew:+.2f}s（脚本触发用电脑 NTP 时钟）")
         except Exception:  # noqa: BLE001
             pass
         if not ok and not args.force:
