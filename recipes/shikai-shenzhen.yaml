@@ -1,0 +1,373 @@
+# 石凯「时空乐园」2026巡回演唱会-深圳站（美团 App）
+# 2026.11.28 19:00 周六 · 深圳市宝安体育中心体育馆 · 票价 480-1180
+#
+# 用法：
+#   python -m gpiao arm  -r recipes/shikai-shenzhen.yaml    # 只做开售前准备
+#   python -m gpiao run  -r recipes/shikai-shenzhen.yaml    # 准备 + 到点抢
+#   python -m gpiao run  -r recipes/shikai-shenzhen.yaml --skip-wait   # 立即演练
+
+name: 石凯「时空乐园」2026巡回演唱会-深圳站
+platform: meituan
+
+app:
+  package: com.sankuai.meituan
+  main_activity: com.meituan.android.pt.homepage.activity.MainActivity
+
+concert:
+  name: 石凯「时空乐园」2026巡回演唱会-深圳站
+  search_keyword: 石凯
+  session: 2026-11-28 周六 19:00
+  # 票档优先级：按顺序尝试，第一个能选上的就用它（680 → 480 → 880）
+  tier_priority:
+    - "¥680"
+    - "¥480"
+    - "¥880"
+  # 本次测试：App 里只存了 1 位实名观演人，所以买 1 张
+  # 要买 2 张，先在美团 App 里加第 2 位观演人，再把 quantity/attendees 改成 2
+  quantity: 1
+  attendees: 1
+  max_price: 1180
+
+sale:
+  # 第四次开售时间（见 App 内「四次开售公告」）。改这里即可换场次。
+  at: "2026-11-24 12:14:00"
+  # 提前量：服务器到点才放票，客户端请求要早发
+  lead_seconds: 1.2
+  # 到点后连点窗口
+  burst_seconds: 8.0
+  tap_interval_ms: 180
+  timezone: "+08:00"
+
+device:
+  # 模拟器: "127.0.0.1:5555"；真机无线 ADB: "192.168.x.x:5555"
+  connect: null
+  serial: null
+  auto_prepare: true
+
+stop_before_payment: true
+
+# ---------------------------------------------------------------------------
+# 控件选择器
+#   按顺序尝试，第一个命中即停；最后一定是按屏幕比例的坐标兜底。
+#   aliases 用来覆盖「文案会变」的场景（开售前「预约」-> 开售后「去抢票」）。
+# ---------------------------------------------------------------------------
+selectors:
+  home_show:
+    candidates:
+      - descContains: 电影演出
+      - text: 电影演出
+    aliases: []
+
+  tab_concert:
+    candidates:
+      - text: 演唱会
+      - textContains: 演唱会
+    aliases: []
+
+  search_box:
+    candidates:
+      - textContains: 搜索明星
+      - descContains: 搜索
+      - textContains: 搜索演出
+    aliases: []
+
+  result_show:
+    candidates:
+      - text: 石凯「时空乐园」2026巡回演唱会
+      - textContains: 时空乐园
+    aliases: []
+
+  city_tab:
+    candidates:
+      - text: 深圳站
+      - text: 深圳
+    aliases: []
+
+  # 详情页底部购买按钮。开售前通常是「预约」/「即将开售」，开售后变「立即购票」
+  # 最后一项是标定出来的坐标（按屏幕比例），到点连点走零查询路径
+  buy_button:
+    candidates:
+      - text: 立即购票
+      - text: 立即购买
+      - text: 去抢票
+      - textContains: 购票
+      - descContains: 立即购票
+      - coord: [0.5585, 0.9414]
+    aliases:
+      - 立即购票
+      - 立即购买
+      - 去抢票
+      - 马上抢
+      - 预约
+      - 即将开售
+
+  # 购票面板 / 订单页的标志（用于判定「已经跳到下一屏」）
+  ticket_ready:
+    candidates:
+      - text: 选择票档
+      - text: 请选择票档
+      - text: 确认
+      - text: 提交订单
+      - textContains: 购票数量
+    aliases: []
+
+  # 场次（票档面板里的场次选择）
+  session_item:
+    candidates:
+      - text: 2026-11-28 周六 19:00
+      - textContains: 2026-11-28
+      - textContains: 19:00
+    aliases: []
+
+  # 订单确认页的标志（进入订单页 = 选票成功）
+  order_ready:
+    candidates:
+      - text: 立即支付
+      - text: 确认购票
+      - textContains: 需选择
+      - textContains: 总计
+    aliases: []
+
+  # 票档（价格）—— 按优先级选，见 select_tier
+  tier:
+    candidates:
+      - text: ¥680
+      - text: ￥680
+      - text: 680
+      - text: ¥480
+      - text: ¥880
+    aliases: []
+
+  # 数量加号：+/- 是画出来的 ImageView，没有 text/desc，只能按坐标定位
+  qty_plus:
+    candidates:
+      - descContains: 增加
+      - text: ＋
+      - text: +
+      - coord: [0.9019, 0.8777]
+    aliases: []
+
+  # 票档面板右下角的「确认」—— 提交选票，进入订单确认页
+  confirm_button:
+    candidates:
+      - text: 确认
+      - text: 提交订单
+      - textContains: 确认
+    aliases: []
+
+  # 订单确认页右下角的「立即支付」—— 点它才会真正生成订单
+  pay_button:
+    candidates:
+      - text: 立即支付
+      - text: 立即付款
+      - textContains: 立即支付
+    aliases: []
+
+  # 支付方式弹层里的最终确认
+  pay_confirm:
+    candidates:
+      - text: 确认支付
+      - text: 确认付款
+      - text: 立即支付
+      - text: 立即付款
+    aliases: []
+
+  # 登录态标志：未登录时首页/详情页会出现「去登录」「登录后...」等字样
+  logged_out_marker:
+    candidates:
+      - textContains: 去登录
+      - textContains: 登录后
+      - text: 登录/注册
+    aliases: []
+    required: false
+
+# ---------------------------------------------------------------------------
+# 步骤
+#   phase: pre  = 开售前准备
+#          fire = 到点瞬间
+#          post = 抢到后立即执行（绝不碰支付）
+# ---------------------------------------------------------------------------
+steps:
+  # ---------- 开售前准备 ----------
+  - action: launch
+    phase: pre
+    settle: 5.0
+
+  # 冷启动可能弹定位 / 隐私 / 登录引导等，先清掉
+  - action: dismiss
+    phase: pre
+    rules:
+      - back_when: 登录体验完整功能
+        timeout: 3
+        settle: 1.5
+      - back_when: 欢迎登录美团
+        timeout: 3
+        settle: 1.5
+      - text: 允许
+        timeout: 3
+        settle: 1.0
+        optional: true
+      - text: 同意
+        timeout: 3
+        settle: 1.5
+        optional: true
+      - text: 以后再说
+        timeout: 2
+        settle: 1.0
+        optional: true
+
+  - action: wait
+    phase: pre
+    target: home_show
+    timeout: 25
+
+  - action: tap
+    phase: pre
+    target: home_show
+    settle: 6.0
+
+  - action: wait
+    phase: pre
+    target: tab_concert
+    timeout: 20
+
+  - action: tap
+    phase: pre
+    target: tab_concert
+    settle: 6.0
+
+  - action: wait
+    phase: pre
+    target: search_box
+    timeout: 20
+
+  - action: search_submit
+    phase: pre
+    text: 石凯
+    settle: 5.0
+
+  - action: wait
+    phase: pre
+    target: result_show
+    timeout: 20
+
+  - action: tap
+    phase: pre
+    target: result_show
+    settle: 8.0
+
+  - action: tap
+    phase: pre
+    target: city_tab
+    settle: 4.0
+    optional: true
+
+  # 首次进入会有「四次开售公告」和「实名制购票须知」两个弹层。
+  # 公告弹层出现时机不稳定（20s ~ 数分钟），这里给足等待时间。
+  # 正文默认截断，要先点末尾的「展开」箭头，按钮才是可点的。
+  - action: dismiss
+    phase: pre
+    rules:
+      - text: 我已阅读并同意
+        expand: [90, 130, 60, 180]
+        timeout: 50
+        settle: 2.5
+        optional: true
+      - text: 知道了
+        timeout: 15
+        settle: 2.5
+        optional: true
+
+  # 详情页是整页滚动的，滚动位置残留会让底部购买按钮的坐标偏移。
+  # 必须先回顶，「立即购票」才会出现在固定位置。
+  - action: scroll_top
+    phase: pre
+    times: 12
+    settle: 0.35
+
+  - action: wait
+    phase: pre
+    target: buy_button
+    timeout: 25
+
+  # 弹层清干净后确认购买按钮在位
+  - action: wait
+    phase: pre
+    target: buy_button
+    timeout: 25
+
+  # 确认设备已登录，否则到点也买不了
+  - action: require
+    phase: pre
+    target: logged_out_marker
+    expect: absent
+    message: 设备未登录美团，请先在 App 内手动登录（含短信验证码）
+
+  - action: dump
+    phase: pre
+    prefix: armed
+
+  # ---------- 到点触发 ----------
+  - action: burst
+    phase: fire
+    target: buy_button
+    until: ticket_ready
+    mode: auto
+    window: 8.0
+    interval_ms: 180
+    check_every_ms: 350
+    # 开售瞬间若弹出公告/须知弹层挡住按钮，先清弹层再继续点
+    blockers:
+      - 我已阅读并同意
+      - 知道了
+
+  # ---------- 抢到后（热路径，每一步都尽量快） ----------
+  - action: select
+    phase: post
+    target: session_item
+    timeout: 1.5
+    settle: 0.3
+    optional: true
+
+  # 选票档 + 选数量 + 确认 —— 这组步骤整体重试：
+  #   这一档没票 → select_tier 自动换优先级里的下一档 → 重新走一遍确认流程
+  - action: loop
+    phase: post
+    until: order_ready
+    max_rounds: 3
+    budget: 12
+    steps:
+      - action: select_tier
+        priority: ["¥680", "¥480", "¥880"]
+        wait: 1.2
+        settle: 0.4
+        total_budget: 4.0
+        optional: true
+      - action: select_quantity
+        plus_target: qty_plus
+        current: 1
+        optional: true
+      - action: tap
+        target: confirm_button
+        settle: 2.5
+        optional: true
+
+  # 实名观演人：快路径只是一次查询（~45ms），已满足就立刻继续
+  - action: select_attendees
+    phase: post
+    count: 1
+    entry: 需选择
+    confirm: 确认选择
+    optional: true
+
+  # 点「立即支付」才会真正生成订单（真金白银），受 auto_pay 开关控制
+  - action: tap
+    phase: post
+    target: pay_button
+    settle: 3.0
+    requires_pay: true
+    optional: true
+
+  - action: stop
+    phase: post
+    message: 已进入支付环节，请核对金额与观演人信息后手动完成支付

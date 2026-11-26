@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 运行证据（截图 / UI dump / 日志）
+runs/
+*.log
+
+# 本地密钥与临时文件
+*.apk
+.env
