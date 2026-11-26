@@ -54,7 +54,7 @@ KEY_TRANSLATE = {
     "resourceIdRegex": "resourceIdMatches",
 }
 
-SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton", "bottomWideButton", "bottomRightButton", "textNorm")
+SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton", "bottomWideButton", "bottomRightButton", "qtyPlus", "textNorm")
 
 
 class SelectorError(Exception):
@@ -134,6 +134,10 @@ class Candidate:
     @property
     def is_bottom_right_button(self) -> bool:
         return bool(self.raw.get("bottomRightButton"))
+
+    @property
+    def is_qty_plus(self) -> bool:
+        return bool(self.raw.get("qtyPlus"))
 
     def build(self, device):
         """构造 uiautomator2 选择器对象。"""
@@ -300,6 +304,66 @@ def _find_bottom_right_button(device, screen_size) -> Optional[Match]:
     )
 
 
+def _find_qty_plus(device, screen_size) -> Optional[Match]:
+    """找数量行右侧的「+」按钮。
+
+    数量行长这样： 数量 每笔订单限购4张   [−]  1张  [+]
+    「−」「+」都是没有文本/描述的可点 ImageView，
+    靠「N张」文本节点定位到这一行，再取该行里最靠右的可点图标。
+    """
+    try:
+        from lxml import etree
+
+        xml = device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+    qty_node = None
+    for node in root.iter("node"):
+        t = (node.get("text", "") or "").strip()
+        if re.fullmatch(r"\d+\s*张", t):
+            b = node.get("bounds", "") or ""
+            m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+            if m:
+                x1, y1, x2, y2 = (int(g) for g in m.groups())
+                qty_node = (x2, (y1 + y2) // 2)
+                break
+    if qty_node is None:
+        return None
+
+    best = None
+    for node in root.iter("node"):
+        if node.get("clickable") != "true":
+            continue
+        cls = node.get("class", "") or ""
+        if not (cls.endswith("ImageView") or cls.endswith("Image")):
+            continue
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        cy = (y1 + y2) // 2
+        if abs(cy - qty_node[1]) > 70:
+            continue
+        if x1 < qty_node[0]:
+            continue
+        if best is None or x1 > best[0]:
+            best = (x1, (x1, y1, x2, y2))
+    if best is None:
+        return None
+    bounds = best[1]
+    return Match(
+        candidate=Candidate(raw={"qtyPlus": True}),
+        selector=None,
+        bounds=bounds,
+        clickable=True,
+        text="+",
+        resource_id="",
+    )
+
+
 @dataclass
 class Match:
     candidate: Candidate
@@ -428,6 +492,12 @@ class Target:
                 continue
             if cand.is_bottom_right_button:
                 m = _find_bottom_right_button(device, screen_size)
+                if m is not None:
+                    matches.append(m)
+                    break
+                continue
+            if cand.is_qty_plus:
+                m = _find_qty_plus(device, screen_size)
                 if m is not None:
                     matches.append(m)
                     break

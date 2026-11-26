@@ -828,34 +828,56 @@ def _parse_attendees(ctx: FlowContext, size):
             continue
         cy = (y1 + y2) // 2
         for row in rows:
-            if abs(cy - row["y"]) <= 70:
+            if abs(cy - row["y"]) <= 85:
                 row["texts"].append(t)
                 break
 
-    # 收集右侧的勾选圈
+    # 收集勾选圈 / 复选框
+    #   美团：ImageView（canvas 绘制，无 checked 属性）-> 靠像素颜色判断
+    #   大麦：CheckBox（有 checked 属性）            -> 直接读 checked
     circles = []
     for node in root.iter("node"):
         cls = node.get("class", "") or ""
-        if not (cls.endswith("ImageView") or cls.endswith("Image")):
+        is_box = cls.endswith("CheckBox")
+        is_img = cls.endswith("ImageView") or cls.endswith("Image")
+        if not (is_box or is_img):
             continue
         b = node.get("bounds", "") or ""
         m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
         if not m:
             continue
         x1, y1, x2, y2 = (int(g) for g in m.groups())
-        if x1 < w * 0.75:
+        if x1 < w * 0.70:
             continue
-        if not (40 <= (x2 - x1) <= 160 and 40 <= (y2 - y1) <= 160):
+        if not (30 <= (x2 - x1) <= 180 and 30 <= (y2 - y1) <= 180):
             continue
-        circles.append(((x1 + x2) // 2, (y1 + y2) // 2))
+        cy = (y1 + y2) // 2
+        # 同一行（跟「身份证」那行对齐）里最贴近的那个
+        best_row = None
+        for row in rows:
+            diff = abs(cy - row["y"])
+            if diff <= 85 and (best_row is None or diff < best_row[0]):
+                best_row = (diff, row["y"])
+        if best_row is None:
+            continue
+        circles.append(
+            {
+                "x": (x1 + x2) // 2,
+                "y": cy,
+                "checked_attr": (node.get("checked", "false") == "true") if is_box else None,
+            }
+        )
 
     out = []
     for row in rows:
         circle = None
+        best = None
         for c in circles:
-            if abs(c[1] - row["y"]) <= 70:
-                circle = c
-                break
+            diff = abs(c["y"] - row["y"])
+            if diff <= 85 and (best is None or diff < best[0]):
+                best = (diff, c)
+        if best is not None:
+            circle = best[1]
         if circle is None:
             continue
         # 名字取该行最靠上的短文本（默认 tag「默认」不算名字）
@@ -865,7 +887,17 @@ def _parse_attendees(ctx: FlowContext, size):
                 continue
             name = t.lstrip("*").strip()
             break
-        out.append({"name": name, "circle": circle, "checked": _is_red(ctx, circle)})
+        if circle["checked_attr"] is not None:
+            checked = circle["checked_attr"]
+        else:
+            checked = _is_red(ctx, (circle["x"], circle["y"]))
+        out.append(
+            {
+                "name": name,
+                "circle": (circle["x"], circle["y"]),
+                "checked": checked,
+            }
+        )
     return out
 
 

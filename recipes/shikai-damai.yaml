@@ -12,9 +12,9 @@ concert:
   tier: null
   tier_priority:
   - ¥680
-  quantity: 1
+  quantity: 2
   max_price: null
-  attendees: 1
+  attendees: 2
   result_match: 时空乐园
 sale:
   at: '2026-11-26 23:22:00'
@@ -94,8 +94,12 @@ selectors:
       - 0.441
   qty_plus:
     candidates:
+    - qtyPlus: true
     - descContains: 增加
     - text: +
+    - coord:
+      - 0.8861
+      - 0.8644
   confirm_button:
     candidates:
     - text: 确定
@@ -151,7 +155,7 @@ steps:
 - action: check_reservation
   phase: pre
   tier: ¥680
-  quantity: 1
+  quantity: 2
   optional: true
 - action: wait
   phase: pre
@@ -214,6 +218,11 @@ steps:
     retry: 1
     settle: 0.1
     optional: true
+- action: select_attendees
+  phase: post
+  entry: 实名观演人
+  confirm: 确认选择
+  optional: true
 - action: tap
   phase: post
   target: submit_button

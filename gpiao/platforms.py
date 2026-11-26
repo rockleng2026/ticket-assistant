@@ -372,7 +372,14 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
             },
             # 选票档页的票档（canvas 绘制，用坐标兜底：第一行第 1/2 个）
             "tier": {"candidates": [{"text": "¥380"}, {"text": "380"}, {"coord": [0.1946, 0.4410]}]},
-            "qty_plus": {"candidates": [{"descContains": "增加"}, {"text": "+"}]},
+            "qty_plus": {
+                "candidates": [
+                    {"qtyPlus": True},
+                    {"descContains": "增加"},
+                    {"text": "+"},
+                    {"coord": [0.8861, 0.8644]},
+                ]
+            },
             "confirm_button": {"candidates": [{"text": "确定"}, {"text": "提交订单"}]},
             "pay_button": {"candidates": [{"text": "立即提交"}, {"text": "提交订单"}, {"text": "立即支付"}]},
             # 「去设置」里的预约信息（核对用）
@@ -477,6 +484,14 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                         "optional": True,
                     },
                 ],
+            },
+            # 大麦的订单页也要逐个勾选实名观演人（CheckBox 节点，带 checked 属性）
+            {
+                "action": "select_attendees",
+                "phase": "post",
+                "entry": "实名观演人",
+                "confirm": "确认选择",
+                "optional": True,
             },
             # 「立即提交」会真正生成订单 —— 提交前必须核对价格
             {
