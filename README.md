@@ -156,7 +156,77 @@ python -m gpiao record -r recipes/shikai-shenzhen.yaml -t buy_button
 
 ---
 
-## 5. 每次开跑前的参数问询
+## 5. 抢票任务（先建任务，到点再续跑）
+
+票是提前几天就公布的，开售时间也就提前几天知道。所以**不用等到临近才写脚本**——
+建一个任务，把流程备好，开抢前 1 小时回来执行就行。
+
+```bash
+# 1) 现在就把任务建好（可重复执行，加 --force 覆盖）
+python -m gpiao task create \
+  --id panweibo-madlove-sz \
+  --platform meituan \
+  --name "潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站" \
+  --keyword 潘玮柏 --city 深圳 \
+  --price 680 --qty 1 --attendees 1 --attendees-filled \
+  --at "2026-11-27 13:22:00" \
+  --prepare-lead 60 --lead 0.5
+
+# 2) 看有哪些任务
+python -m gpiao task list
+python -m gpiao task show panweibo-madlove-sz
+
+# 3) 开抢前 1 小时回来执行（会自动检查时间：没到就提示你等）
+python -m gpiao task resume panweibo-madlove-sz
+
+#    还没到准备时间？让它原地等：
+python -m gpiao task resume panweibo-madlove-sz --wait-now
+
+#    只做准备不抢购（提前验证控件标定对不对）：
+python -m gpiao task resume panweibo-madlove-sz --arm-only
+
+#    立刻演练一次（不等时间）：
+python -m gpiao task run panweibo-madlove-sz --skip-wait
+```
+
+### 任务 vs 配方
+
+| | 任务 `tasks/<id>.json` | 配方 `recipes/<id>.yaml` |
+|---|---|---|
+| 存什么 | 目标 + 参数 + 时间表 + 状态 | 怎么点（选择器 + 步骤） |
+| 谁生成 | `task create` 按平台模板生成 | 同上 |
+| 谁改 | `task create --force` 或改参数后 resume | `gpiao record` 标定控件 |
+
+`task resume` 会先把任务里的参数（价格优先级、数量、观演人数、开售时间）
+**同步回配方**，再执行。所以改价格只需要改任务，不用动配方。
+
+### 任务状态
+
+`created` → `armed`（设备已摆到购买页）→ `fired`（已开抢）→ `done`
+
+### 平台
+
+| 平台 | 状态 | 说明 |
+|---|---|---|
+| `meituan` | **已完整标定** | 美团 App 猫眼演出，实测可用 |
+| `damai` | **脚手架** | 大麦 App（`cn.damai`）。控件需要用 `gpiao record` 标定一次 |
+
+大麦接入步骤：
+
+```bash
+# 1) 建一个Damai任务
+python -m gpiao task create --platform damai --keyword 演出名 --price 680 --qty 1 \
+    --at "2026-12-05 19:30:00"
+# 2) 手机上打开大麦到演出详情页，逐个标定控件
+python -m gpiao record -r recipes/<id>.yaml -t search_entry
+python -m gpiao record -r recipes/<id>.yaml -t buy_button
+# 3) 用 arm-only 验证整条路径
+python -m gpiao task resume <id> --arm-only
+```
+
+---
+
+## 6. 每次开跑前的参数问询
 
 抢票的三件事必须每次确认，`gpiao run` / `gpiao arm` 会先问你：
 
@@ -183,7 +253,7 @@ python -m gpiao record -r recipes/shikai-shenzhen.yaml -t buy_button
 
 ---
 
-## 6. 配方（Recipe）
+## 7. 配方（Recipe）
 
 一份配方 = 一场演出的完整抢票策略。`recipes/shikai-shenzhen.yaml`：
 
@@ -263,7 +333,7 @@ candidates:
 
 ---
 
-## 7. 命令
+## 8. 命令
 
 ```bash
 python -m gpiao doctor                          # 环境体检
@@ -278,6 +348,15 @@ python -m gpiao shot   -o out.png                # 截图
 python -m gpiao dump   -o ui.xml                 # 导出 UI 层级
 python -m gpiao tap --text "立即购票"            # 临时点一下
 python -m gpiao swipe --x1 540 --y1 1200 --x2 540 --y2 700
+
+# 任务
+python -m gpiao task create --keyword 演出名 --price 680 --qty 1 --at "..."
+python -m gpiao task list
+python -m gpiao task show <id>
+python -m gpiao task resume <id>                 # 到点了继续跑
+python -m gpiao task resume <id> --arm-only      # 只准备
+python -m gpiao task resume <id> --wait-now      # 原地等到准备时间
+python -m gpiao task rm <id>
 ```
 
 每次运行都会在 `runs/<时间戳>-<阶段>/` 留下**截图 + UI dump + 事件流水**，
@@ -285,7 +364,7 @@ python -m gpiao swipe --x1 540 --y1 1200 --x2 540 --y2 700
 
 ---
 
-## 8. 实测记录：石凯深圳站
+## 9. 实测记录：石凯深圳站
 
 > 全部数据来自真机（realme RMX5090 / Android 16 / 1264×2780 / USB ADB）。
 
@@ -366,18 +445,21 @@ python -m gpiao swipe --x1 540 --y1 1200 --x2 540 --y2 700
 | 坑 | 现象 | 处理 |
 |---|---|---|
 | 金刚区用 desc | 按 text 永远找不到「电影演出」 | 选择器支持 `descContains` |
+| 按钮文案带空格 | 底部按钮是「已 预 约」，`text="预约"` 匹配不到 | 新增 `textNorm` 候选（XPath `normalize-space`） |
 | 公告弹层按钮禁用 | 灰色「我已阅读并同意」点不动 | `dismiss` 的 `expand` 先点末尾的「展开」箭头（该箭头是画出来的图标，无无障碍节点，靠几何定位） |
 | 弹层出现时机不定 | 20s ~ 数分钟后才冒出来 | `dismiss` 给足超时；burst 阶段还有 `blockers` 兜底 |
 | 按钮文案随状态变 | 「预约」→「去抢票」→「立即购票」 | `aliases` 机制 |
 | 详情页会滚动 | 返回后滚动位置残留，按钮坐标偏移，点到了「声入人心」 | 准备阶段 `scroll_top` 回顶 |
+| 票档面板有上滑动画 | 动画没结束就点，表现为「点了没反应」，极易误判成没票 | `select_tier` 等位置稳定再点，点空补点一次 |
 | 数量 +/- 无文本 | 是 ImageView，text/desc 都是空 | 只能用屏幕比例坐标定位 |
 | 登录半屏弹层挡住首页 | 关不掉导致找不到入口 | `dismiss` 支持 `back_when` |
 | App 状态不确定 | 上次停在登录页 | `launch` 默认 stop + start |
 | uiautomator2 3.x 的 bounds 是 dict | 老解析取不到坐标 | `_to_bounds` 兼容 dict/列表/字符串三种格式 |
+| 支付页主按钮文案动态 | 「已减0.45元，月付交易」 | 新增 `bottomButton` 候选（屏幕最底那个按钮） |
 
 ---
 
-## 9. 上手建议（按这个顺序）
+## 10. 上手建议（按这个顺序）
 
 1. **提前 1 天**：App 里先登录好、**填好实名观演人信息**、绑定支付方式
    （详情页的「抢票攻略：预填信息，抢票快人一步」→「去填写」）
@@ -425,7 +507,7 @@ T+6.35s  「立即支付」已点，支付页就绪    ← 你手动付
 
 ---
 
-## 10. 边界与注意事项
+## 11. 边界与注意事项
 
 - 本项目只做**你本人账号**的自动化操作，不碰验证码识别、不做多账号并发
 - **付款不自动化**：`auto_pay: false`，脚本停在支付页，你自己点支付
@@ -438,12 +520,14 @@ T+6.35s  「立即支付」已点，支付页就绪    ← 你手动付
 
 ---
 
-## 11. 目录
+## 12. 目录
 
 ```
 gpiao/
   cli.py          命令行入口
   config.py       配方模型（配置/时间/设备）
+  task.py         任务模型（目标/参数/时间表/状态/持久化）
+  platforms.py    平台模板（meituan 已标定 / damai 脚手架）
   device.py       设备层（连接/准备/快速点击通道/截图）
   selectors.py    控件选择器（多候选 + 降级 + 坐标兜底 + 底部按钮）
   flow.py         流程引擎（action 分发 + burst 连点 + 换档重试 + 弹层处理）
@@ -451,6 +535,7 @@ gpiao/
   ask.py          开跑前的参数问询（价格 / 数量 / 观演人）
   logging_setup.py 日志与证据留存
 recipes/          演出配方
-tests/            单元测试（16 个，不依赖真机）
+tasks/            抢票任务
+tests/            单元测试（34 个，不依赖真机）
 runs/             每次运行的截图/dump/事件日志
 ```

@@ -1,0 +1,40 @@
+{
+  "id": "panweibo-madlove-sz",
+  "name": "潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站",
+  "platform": "meituan",
+  "status": "armed",
+  "created_at": "2026-11-26 12:30:15",
+  "schedule": {
+    "sale_at": "2026-11-27 13:22:00",
+    "prepare_lead_minutes": 60,
+    "lead_seconds": 0.5
+  },
+  "target": {
+    "keyword": "潘玮柏",
+    "show_name": "潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站",
+    "city": "深圳"
+  },
+  "params": {
+    "tier_priority": [
+      "¥680"
+    ],
+    "quantity": 1,
+    "attendees": 1,
+    "attendees_filled": true
+  },
+  "recipe": "recipes/panweibo-madlove-sz.yaml",
+  "history": [
+    {
+      "ts": "2026-11-26 12:30:15",
+      "event": "created"
+    },
+    {
+      "ts": "2026-11-26 12:31:32",
+      "event": "armed"
+    },
+    {
+      "ts": "2026-11-26 12:34:42",
+      "event": "armed_ok"
+    }
+  ]
+}

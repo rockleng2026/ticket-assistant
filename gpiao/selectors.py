@@ -54,7 +54,7 @@ KEY_TRANSLATE = {
     "resourceIdRegex": "resourceIdMatches",
 }
 
-SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton")
+SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton", "textNorm")
 
 
 class SelectorError(Exception):
@@ -133,6 +133,11 @@ class Candidate:
             return None
         if "xpath" in self.raw:
             return device.xpath(self.raw["xpath"])
+        if "textNorm" in self.raw:
+            # 中文 App 常把按钮文字拆成「已 预 约」这种带空格的，
+            # 用 XPath 的 normalize-space 归一后再等值匹配
+            want = (self.raw["textNorm"] or "").strip()
+            return device.xpath(f"//*[normalize-space(text())='{want}']")
         kwargs = {}
         for k, v in self.raw.items():
             if k in DIRECT_KEYS:

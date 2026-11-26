@@ -121,6 +121,201 @@ def cmd_connect(args) -> int:
     return 0
 
 
+def cmd_task(args) -> int:
+    """任务管理：create / list / show / resume / run / rm。"""
+    from . import task as taskmod
+
+    root = ROOT
+    action = args.task_action
+
+    # ---------------- create ----------------
+    if action == "create":
+        platform = args.platform
+        keyword = args.keyword
+        name = args.name or keyword
+        prices = []
+        for chunk in (args.price or "").replace("，", ",").split(","):
+            chunk = chunk.strip().replace("￥", "").replace("¥", "").replace("元", "")
+            if chunk:
+                prices.append(f"¥{chunk}" if chunk.isdigit() else chunk)
+        if not prices:
+            print("请用 --price 指定价格，例如 --price 680 或 --price 680,480")
+            return 1
+
+        sale_at = None
+        if args.at:
+            from .config import CST as _CST
+            from .config import _parse_datetime
+
+            sale_at = _parse_datetime(args.at, _CST)
+        task_id = args.id or taskmod.slugify(f"{keyword}-{platform}")
+        exists = (taskmod.tasks_dir(root) / f"{task_id}.json").exists()
+        if exists and not args.force:
+            print(f"任务 {task_id} 已存在，加 --force 覆盖")
+            return 1
+
+        from .platforms import build_recipe
+        from .config import save_recipe
+
+        recipe = build_recipe(platform, name, keyword)
+        recipe.concert.tier_priority = prices
+        recipe.concert.quantity = int(args.qty)
+        recipe.concert.attendees = int(args.attendees if args.attendees is not None else args.qty)
+        if sale_at:
+            recipe.sale.at = sale_at
+        rpath = taskmod.recipe_path(root, task_id)
+        save_recipe(recipe, rpath)
+
+        task = taskmod.Task(
+            id=task_id,
+            name=name,
+            platform=platform,
+            status="created",
+            created_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+            schedule=taskmod.Schedule(
+                sale_at=sale_at,
+                prepare_lead_minutes=int(args.prepare_lead),
+                lead_seconds=float(args.lead),
+            ),
+            target={
+                "keyword": keyword,
+                "show_name": name,
+                "city": args.city,
+            },
+            params={
+                "tier_priority": prices,
+                "quantity": int(args.qty),
+                "attendees": int(args.attendees if args.attendees is not None else args.qty),
+                "attendees_filled": bool(args.attendees_filled),
+            },
+            recipe=str(rpath.relative_to(root)).replace("\\", "/"),
+        )
+        task.log("created")
+        p = taskmod.save_task(root, task)
+        print(f"✓ 任务已创建: {task_id}")
+        print(f"  任务文件 {p.relative_to(root)}")
+        print(f"  配方文件 {task.recipe}")
+        print(f"  开售时间 {task.sale_text()}  |  距开抢 {task.countdown_text()}")
+        print(f"  价格 {' > '.join(prices)}  |  数量 {task.params['quantity']} 张"
+              f"  |  观演人 {task.params['attendees']} 位"
+              f"（{'已预填' if task.params['attendees_filled'] else '未预填'}）")
+        print(f"\n开抢前 1 小时执行：  python -m gpiao task resume {task_id}")
+        return 0
+
+    # ---------------- list ----------------
+    if action == "list":
+        tasks = taskmod.list_tasks(root)
+        if not tasks:
+            print("还没有任务。用 `gpiao task create --help` 看怎么建。")
+            return 0
+        print(f"{'ID':<26} {'状态':<9} {'开售时间':<21} {'倒计时':<16} 名称")
+        print("-" * 100)
+        for t in tasks:
+            print(f"{t.id:<26} {t.status:<9} {t.sale_text():<21} {t.countdown_text():<16} {t.name}")
+        return 0
+
+    # ---------------- show ----------------
+    if action == "show":
+        t = taskmod.load_task(root, args.task_id)
+        print(t.describe())
+        print(f"    距开抢 {t.countdown_text()}")
+        if t.history:
+            print("    历史:")
+            for h in t.history[-10:]:
+                print(f"      {h.get('ts')} {h.get('event')}")
+        return 0
+
+    # ---------------- resume / run ----------------
+    if action in ("resume", "run"):
+        t = taskmod.load_task(root, args.task_id)
+        # 任务参数同步回配方
+        taskmod.bind_recipe(root, t)
+        recipe = load_recipe(Path(root) / t.recipe)
+
+        print(f"▶ 任务 {t.id}")
+        print(f"  {t.name}")
+        print(f"  开售 {t.sale_text()}  |  距开抢 {t.countdown_text()}")
+        print(f"  价格 {' > '.join(t.params.get('tier_priority', []))}"
+              f"  |  数量 {t.params.get('quantity')} 张")
+        if not t.params.get("attendees_filled"):
+            print("  ⚠ 观演人未标记为已预填 —— 实名制演唱会会卡在支付前一步")
+
+        # resume：开抢前 prepare_lead_minutes 分钟就该把设备摆好
+        if action == "resume" and t.schedule.sale_at and not args.arm_only:
+            import datetime as _dt
+
+            from .config import CST as _CST
+
+            now = _dt.datetime.now(_dt.timezone.utc).astimezone(_CST)
+            prepare_at = t.schedule.sale_at - _dt.timedelta(minutes=t.schedule.prepare_lead_minutes)
+
+            if now < prepare_at:
+                wait_s = (prepare_at - now).total_seconds()
+                print(f"\n  还没到准备时间（{prepare_at.strftime('%m-%d %H:%M')} 开始准备）")
+                print(f"  现在 {now.strftime('%m-%d %H:%M')}，需要等 {wait_s / 3600:.1f} 小时")
+                print("  → 到了再执行一次 `gpiao task resume <id>`；")
+                print("    或加 --wait-now 让脚本在这里一直等到准备时间")
+                if not args.wait_now:
+                    return 0
+                print("  等待中…")
+                while _dt.datetime.now(_dt.timezone.utc).astimezone(_CST) < prepare_at:
+                    time.sleep(30)
+
+
+        recorder = taskmod.evidence_dir(root, t.id, action)
+        setup_logging(args.verbose, RUNS_DIR / "gpiao.log")
+        device = _connect(recipe, args)
+        device.recorder = recorder
+        ctx = build_context(device, recipe)
+        t.status = "armed"
+        t.log("armed")
+        taskmod.save_task(root, t)
+
+        print("\n▶ 准备阶段")
+        run_steps(ctx, recipe.steps, phase="pre")
+        device.screenshot("armed")
+        t.status = "armed"
+        t.log("armed_ok")
+        taskmod.save_task(root, t)
+
+        if args.arm_only:
+            print("\n✅ 准备阶段完成（--arm-only：不进入等待与抢购）")
+            print(f"证据目录: {recorder.dir}")
+            for line in ctx.trace:
+                print(f"  · {line}")
+            return 0
+
+        plan = clock.build_plan(recipe.sale.at, recipe.sale.lead_seconds)
+        print(f"\n▶ {plan.describe()}")
+        if args.skip_wait:
+            print("  --skip-wait：立即触发")
+            plan.fire_epoch = clock.now().timestamp()
+        clock.count_down(plan, print)
+
+        from .flow import run_fire
+
+        print("\n▶ 触发阶段")
+        run_fire(ctx, plan)
+        device.screenshot("after-fire")
+        t.status = "fired"
+        t.log("fired")
+        taskmod.save_task(root, t)
+
+        print("\n✅ 流程结束")
+        print(f"证据目录: {recorder.dir}")
+        for line in ctx.trace:
+            print(f"  · {line}")
+        return 0
+
+    # ---------------- rm ----------------
+    if action == "rm":
+        taskmod.delete_task(root, args.task_id)
+        print(f"已删除任务 {args.task_id}")
+        return 0
+
+    return 1
+
+
 def cmd_doctor(args) -> int:
     print("=" * 62)
     print(" gpiao 诊断")
@@ -471,6 +666,57 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--pair", action="store_true", help="执行配对（首次连接需要）")
     sp.add_argument("--code", help="6 位配对码，省略则交互输入")
     sp.set_defaults(func=cmd_connect)
+
+    # ---------------- task ----------------
+    sp = sub.add_parser("task", help="抢票任务：create / list / show / resume / run / rm")
+    tsp = sp.add_subparsers(dest="task_action", required=True)
+
+    c = tsp.add_parser("create", help="创建抢票任务（现在建，开抢前再来跑）")
+    c.add_argument("--id", help="任务 id（默认按关键字生成）")
+    c.add_argument("--platform", default="meituan", choices=["meituan", "damai"])
+    c.add_argument("--name", help="演出名称")
+    c.add_argument("--keyword", required=True, help="App 内搜索关键字")
+    c.add_argument("--city", default="深圳")
+    c.add_argument("--price", required=True, help="价格优先级，如 680 或 680,480,880")
+    c.add_argument("--qty", type=int, default=1, help="购票数量")
+    c.add_argument("--attendees", type=int, default=None, help="实名观演人位数")
+    c.add_argument(
+        "--attendees-filled",
+        action="store_true",
+        help="确认实名观演人已在 App 里预填写完毕",
+    )
+    c.add_argument("--at", help="开售时间，如 2026-11-27 13:22:00")
+    c.add_argument("--prepare-lead", type=int, default=60, help="开抢前多少分钟开始准备")
+    c.add_argument("--lead", type=float, default=0.5, help="到点提前量（秒）")
+    c.add_argument("--force", action="store_true")
+    c.set_defaults(func=cmd_task)
+
+    c = tsp.add_parser("list", help="列出所有任务")
+    c.set_defaults(func=cmd_task)
+
+    c = tsp.add_parser("show", help="查看任务详情")
+    c.add_argument("task_id")
+    c.set_defaults(func=cmd_task)
+
+    c = tsp.add_parser("resume", help="继续任务：准备 -> 等待 -> 抢")
+    c.add_argument("task_id")
+    c.add_argument("--serial")
+    c.add_argument("--connect")
+    c.add_argument("--skip-wait", action="store_true", help="不等待，立即触发")
+    c.add_argument("--wait-now", action="store_true", help="还没到准备时间就原地等待")
+    c.add_argument("--arm-only", action="store_true", help="只做准备阶段，不等待不抢购")
+    c.set_defaults(func=cmd_task)
+
+    c = tsp.add_parser("run", help="立刻执行任务（不等准备时间）")
+    c.add_argument("task_id")
+    c.add_argument("--serial")
+    c.add_argument("--connect")
+    c.add_argument("--skip-wait", action="store_true")
+    c.set_defaults(func=cmd_task)
+
+    c = tsp.add_parser("rm", help="删除任务")
+    c.add_argument("task_id")
+    c.set_defaults(func=cmd_task)
 
     sp = sub.add_parser("init", help="生成配方骨架")
     sp.add_argument("name", help="配方名（也用作文件名）")
