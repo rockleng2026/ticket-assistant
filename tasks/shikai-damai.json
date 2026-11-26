@@ -1,0 +1,33 @@
+{
+  "id": "shikai-damai",
+  "name": "石凯「时空乐园」2026巡回演唱会-深圳站(大麦)",
+  "platform": "damai",
+  "status": "created",
+  "created_at": "2026-11-26 15:41:32",
+  "schedule": {
+    "sale_at": "2026-11-26 23:22:00",
+    "prepare_lead_minutes": 60,
+    "lead_seconds": 0.5
+  },
+  "target": {
+    "keyword": "石凯",
+    "show_name": "石凯「时空乐园」2026巡回演唱会-深圳站(大麦)",
+    "city": "深圳",
+    "result_match": "时空乐园"
+  },
+  "params": {
+    "tier_priority": [
+      "¥680"
+    ],
+    "quantity": 1,
+    "attendees": 1,
+    "attendees_filled": true
+  },
+  "recipe": "recipes/shikai-damai.yaml",
+  "history": [
+    {
+      "ts": "2026-11-26 15:41:32",
+      "event": "created"
+    }
+  ]
+}

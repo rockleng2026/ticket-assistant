@@ -54,7 +54,7 @@ KEY_TRANSLATE = {
     "resourceIdRegex": "resourceIdMatches",
 }
 
-SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton", "bottomWideButton", "textNorm")
+SPECIAL_KEYS = ("xpath", "coord", "index", "prefer", "scope", "bottomButton", "bottomWideButton", "bottomRightButton", "textNorm")
 
 
 class SelectorError(Exception):
@@ -130,6 +130,10 @@ class Candidate:
     @property
     def is_bottom_wide_button(self) -> bool:
         return bool(self.raw.get("bottomWideButton"))
+
+    @property
+    def is_bottom_right_button(self) -> bool:
+        return bool(self.raw.get("bottomRightButton"))
 
     def build(self, device):
         """构造 uiautomator2 选择器对象。"""
@@ -246,6 +250,48 @@ def _find_bottom_wide_button(device, screen_size) -> Optional[Match]:
     _, node, bounds = best
     return Match(
         candidate=Candidate(raw={"bottomWideButton": True}),
+        selector=None,
+        bounds=bounds,
+        clickable=True,
+        text=node.get("text", "") or "",
+        resource_id=node.get("resource-id", "") or "",
+    )
+
+
+def _find_bottom_right_button(device, screen_size) -> Optional[Match]:
+    """找底部条**右侧**那个按钮（大麦选票档页的「确定」也是 canvas 绘制）。
+
+    判据：在底部 12% 区域、位于屏幕右半边、宽度在 20%~60% 之间。
+    """
+    try:
+        from lxml import etree
+
+        xml = device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+    w, h = screen_size
+    best = None
+    for node in root.iter("node"):
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if y1 < h * 0.88 or y2 > h:
+            continue
+        width = x2 - x1
+        if x1 < w * 0.35 or not (w * 0.18 <= width <= w * 0.70):
+            continue
+        key = (y1, width)
+        if best is None or key > best[0]:
+            best = (key, node, (x1, y1, x2, y2))
+    if best is None:
+        return None
+    _, node, bounds = best
+    return Match(
+        candidate=Candidate(raw={"bottomRightButton": True}),
         selector=None,
         bounds=bounds,
         clickable=True,
@@ -376,6 +422,12 @@ class Target:
                 continue
             if cand.is_bottom_wide_button:
                 m = _find_bottom_wide_button(device, screen_size)
+                if m is not None:
+                    matches.append(m)
+                    break
+                continue
+            if cand.is_bottom_right_button:
+                m = _find_bottom_right_button(device, screen_size)
                 if m is not None:
                     matches.append(m)
                     break

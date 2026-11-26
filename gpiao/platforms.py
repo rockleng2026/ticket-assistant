@@ -335,28 +335,46 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 ],
                 "aliases": ["立即购买", "立即抢购", "去预约", "已预约"],
             },
-            # 购买面板标志（大麦点完立即购买会进选票页）
+            # 购买面板标志（点完「立即购票」会进选票档页）
             "ticket_ready": {
                 "candidates": [
-                    {"text": "确认"},
-                    {"text": "提交订单"},
-                    {"textContains": "票档"},
-                    {"textContains": "观演人"},
+                    {"text": "票档"},
+                    {"text": "场次"},
+                    {"textContains": "每笔订单限购"},
+                    {"textContains": "确认购买"},
                 ]
             },
             # 订单页标志
             "order_ready": {
                 "candidates": [
-                    {"text": "提交订单"},
-                    {"text": "确认无误"},
+                    {"text": "确认购买"},
+                    {"text": "立即提交"},
+                    {"text": "实名观演人"},
+                    {"textContains": "支付方式"},
                     {"textContains": "配送方式"},
-                    {"textContains": "应付金额"},
                 ]
             },
-            "tier": {"candidates": [{"text": "¥380"}, {"text": "380"}]},
+            # 选票档页右下角的「确定」（canvas 绘制，没有文本）
+            "sku_confirm": {
+                "candidates": [
+                    {"text": "确定"},
+                    {"bottomRightButton": True},
+                    {"coord": [0.7790, 0.9421]},
+                ]
+            },
+            # 订单页的「立即提交」—— 会真正生成订单
+            "submit_button": {
+                "candidates": [
+                    {"text": "立即提交"},
+                    {"text": "提交订单"},
+                    {"textContains": "提交"},
+                ]
+            },
+            # 选票档页的票档（canvas 绘制，用坐标兜底：第一行第 1/2 个）
+            "tier": {"candidates": [{"text": "¥380"}, {"text": "380"}, {"coord": [0.1946, 0.4410]}]},
             "qty_plus": {"candidates": [{"descContains": "增加"}, {"text": "+"}]},
-            "confirm_button": {"candidates": [{"text": "确认"}, {"text": "提交订单"}]},
-            "pay_button": {"candidates": [{"text": "提交订单"}, {"text": "立即支付"}]},
+            "confirm_button": {"candidates": [{"text": "确定"}, {"text": "提交订单"}]},
+            "pay_button": {"candidates": [{"text": "立即提交"}, {"text": "提交订单"}, {"text": "立即支付"}]},
             # 「去设置」里的预约信息（核对用）
             "reservation_entry": {"candidates": [{"text": "去设置"}]},
             "reservation_info": {
@@ -395,6 +413,8 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "quantity": 1,
                 "optional": True,
             },
+            # 核对完会返回上一页，确认还在详情页（否则后面会点空）
+            {"action": "wait", "phase": "pre", "target": "detail_ready", "timeout": 15},
             {"action": "scroll_top", "phase": "pre", "times": 10, "settle": 0.3},
             {"action": "wait", "phase": "pre", "target": "buy_button", "timeout": 25},
             {
@@ -416,28 +436,54 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "interval_ms": 120,
                 "check_every_ms": 150,
             },
+            # 选票档（canvas 绘制，用坐标兜底）+ 选数量
             {
                 "action": "loop",
                 "phase": "post",
                 "until": "order_ready",
                 "max_rounds": 2,
-                "budget": 8,
+                "budget": 10,
                 "steps": [
                     {
+                        "action": "select_tier",
+                        "priority": ["¥380"],
+                        "wait": 0.8,
+                        "settle": 0.3,
+                        # 大麦的票档是 canvas 绘制的（没有文本节点），
+                        # 只能按网格位置逐个试，点完从底部金额反查选中的是哪一档。
+                        # 坐标是"第几档"的近似位置，顺序与实际票档顺序对应。
+                        "coords": [
+                            [0.1946, 0.4410],
+                            [0.4943, 0.4410],
+                            [0.1946, 0.5112],
+                            [0.4943, 0.5112],
+                        ],
+                        "grid_settle": 0.45,
+                        "optional": True,
+                    },
+                    {
+                        "action": "select_quantity",
+                        "plus_target": "qty_plus",
+                        "current": 1,
+                        "optional": True,
+                    },
+                    {
                         "action": "tap",
-                        "target": "confirm_button",
+                        "target": "sku_confirm",
                         "until": "order_ready",
-                        "until_timeout": 2.0,
+                        "until_timeout": 3.0,
                         "retry": 1,
                         "settle": 0.1,
                         "optional": True,
                     },
                 ],
             },
+            # 「立即提交」会真正生成订单 —— 提交前必须核对价格
             {
                 "action": "tap",
                 "phase": "post",
-                "target": "pay_button",
+                "target": "submit_button",
+                "verify_price": "¥380",
                 "settle": 2.0,
                 "requires_submit": True,
                 "optional": True,

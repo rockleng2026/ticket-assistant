@@ -618,6 +618,59 @@ def _wait_stable(target: Target, device, max_wait: float = 0.35):
     return match
 
 
+def _re_price(price: str) -> str:
+    """把 '¥680' / '680元' 归一成 '680'。"""
+    import re as _re
+
+    m = _re.search(r"\d+(?:\.\d+)?", str(price))
+    return m.group(0) if m else ""
+
+
+def _read_sku_price(ctx: FlowContext, size):
+    """读出选票档页底部显示的价格（大麦票档是 canvas 画的，只能靠底部金额反查）。
+
+    底部结构： [¥] [680]  —— 「¥」右边紧邻的数字就是价格。
+    """
+    import re as _re
+
+    try:
+        from lxml import etree
+
+        xml = ctx.device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+    w, h = size
+    yuan = None
+    for node in root.iter("node"):
+        if (node.get("text", "") or "").strip() == "¥":
+            b = node.get("bounds", "") or ""
+            m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+            if m:
+                x1, y1, x2, y2 = (int(g) for g in m.groups())
+                if y1 > h * 0.85:
+                    yuan = (x2, y1, y2)
+                    break
+    if yuan is None:
+        return None
+
+    for node in root.iter("node"):
+        t = (node.get("text", "") or "").strip()
+        if not _re.fullmatch(r"\d+(?:\.\d+)?", t):
+            continue
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if y1 < h * 0.85:
+            continue
+        if x1 - yuan[0] <= 40:
+            return t
+    return None
+
+
 def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     """按优先级逐个尝试票档：380 → 480 → ...
 
@@ -634,6 +687,9 @@ def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     wait = float(step.get("wait", 0.8))          # 只等首个候选出现
     settle = float(step.get("settle", 0.15))
     budget = float(step.get("total_budget", 5.0))
+    # 网格坐标（大麦票档是 canvas 绘制的，只能按位置点）：
+    #   [[x比例,y比例], ...] 按顺序尝试，点完从底部金额反查选中的是哪一档
+    grid = step.get("coords") or []
 
     # 从游标继续：上一轮已经试过并且失败的档不再重复浪费时间
     start = min(ctx.tier_cursor, len(priority) - 1) if priority else 0
@@ -650,6 +706,23 @@ def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
         # 只有第一档给足等待；后面的档只有在"压根没有这个档"时才用到
         found = target.wait(ctx.device, wait if idx == start else 0.3, size)
         if found is None:
+            # 票档可能是 canvas 绘制的（没有文本节点），改用网格坐标逐个试，
+            # 点完从底部金额反查选中的到底是哪一档
+            if grid:
+                want = _re_price(price)
+                for pos in grid:
+                    gx = int(size[0] * float(pos[0]))
+                    gy = int(size[1] * float(pos[1]))
+                    ctx.device.click(gx, gy)
+                    time.sleep(float(step.get("grid_settle", 0.45)))
+                    got = _read_sku_price(ctx, size)
+                    _log_step(ctx, f"票档网格试点 ({gx},{gy}) -> 底部金额 {got}")
+                    if got and want and got.startswith(want):
+                        ctx.tier_cursor = idx + 1
+                        _log_step(ctx, f"票档 {price}: 选中成功（网格坐标定位）")
+                        return StepResult("select_tier", True, price)
+                _log_step(ctx, f"票档 {price}: 网格坐标里没找到")
+                continue
             _log_step(ctx, f"票档 {price}: 本场次没有该档，换下一档")
             continue
 
@@ -989,17 +1062,24 @@ def _act_check_reservation(ctx: FlowContext, step: Dict[str, Any]) -> StepResult
 
     ok = True
     if want_tier:
-        norm_want = str(want_tier).replace("￥", "¥").replace(" ", "")
-        norm_got = tier_line.replace(" ", "")
-        if norm_want not in norm_got:
-            _log_step(ctx, f"预约核对: 票档不符！期望 {want_tier}，实际「{tier_line}」")
-            ok = False
+        if not tier_line:
+            # 本场次没有票档预约（已在售的演出只有观演人预选）——跳过而不是报错
+            _log_step(ctx, "预约核对: 本场次没有票档预约（已在售），跳过票档校验")
+        else:
+            norm_want = str(want_tier).replace("￥", "¥").replace(" ", "")
+            norm_got = tier_line.replace(" ", "")
+            if norm_want not in norm_got:
+                _log_step(ctx, f"预约核对: 票档不符！期望 {want_tier}，实际「{tier_line}」")
+                ok = False
     if want_qty:
-        m = _re.search(r"(\d+)\s*张", qty_line)
-        got = int(m.group(1)) if m else None
-        if got != int(want_qty):
-            _log_step(ctx, f"预约核对: 票张数不符！期望 {want_qty}，实际「{qty_line}」")
-            ok = False
+        if not qty_line:
+            _log_step(ctx, "预约核对: 本场次没有票张数预约，跳过票张数校验")
+        else:
+            m = _re.search(r"(\d+)\s*张", qty_line)
+            got = int(m.group(1)) if m else None
+            if got != int(want_qty):
+                _log_step(ctx, f"预约核对: 票张数不符！期望 {want_qty}，实际「{qty_line}」")
+                ok = False
 
     # 返回详情页
     ctx.device.press("back")
@@ -1010,6 +1090,41 @@ def _act_check_reservation(ctx: FlowContext, step: Dict[str, Any]) -> StepResult
     else:
         _log_step(ctx, "预约核对: 不通过 —— 请在「去设置」里改好观演人/票档/票张数")
     return StepResult("check_reservation", ok, tier_line + " " + qty_line)
+
+
+def _act_verify_price(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
+    """下单前核对实际价格。
+
+    大麦的票档是 canvas 绘制的（没有无障碍节点），脚本可能点错档位。
+    但**选中后价格会显示在底部的金额文本里**（￥680.00），
+    所以在点「立即提交」之前必须核对一次，对不上就中止，绝不提交错价。
+    """
+    import re as _re
+
+    want = step.get("price") or (ctx.recipe.concert.tier_priority or [None])[0]
+    if not want:
+        _log_step(ctx, "价格校验: 未配置期望价格，跳过")
+        return StepResult("verify_price", True, "no-expect")
+
+    try:
+        xml = ctx.device.u2.dump_hierarchy()
+        texts = _re.findall(r'text="([^"]*)"', xml)
+    except Exception:  # noqa: BLE001
+        texts = []
+
+    # 拼出页面上所有金额文本，例如 ￥ + 680.00
+    joined = " ".join(texts)
+    prices = _re.findall(r"(\d+(?:\.\d+)?)", joined)
+    norm_want = _re.sub(r"[^\d.]", "", str(want))
+
+    found = [p for p in prices if p.startswith(norm_want)]
+    _log_step(ctx, f"价格校验: 期望 {want}，页面金额 {prices[:8]}")
+    if found:
+        _log_step(ctx, "价格校验: 通过")
+        return StepResult("verify_price", True, found[0])
+    _log_step(ctx, f"价格校验: 不通过！期望 {want}，页面上没找到 —— 不会提交订单")
+    _safe_shot(ctx, "price-mismatch")
+    return StepResult("verify_price", False, norm_want)
 
 
 ACTIONS = {
@@ -1035,6 +1150,7 @@ ACTIONS = {
     "loop": _act_loop,
     "burst": _act_burst,
     "check_reservation": _act_check_reservation,
+    "verify_price": _act_verify_price,
     "dismiss": _act_dismiss,
     "require": _act_require,
     "stop": _act_stop,
@@ -1056,6 +1172,17 @@ def run_steps(ctx: FlowContext, steps: List[Dict[str, Any]], phase: Optional[str
         if step.get("requires_pay") and not ctx.recipe.auto_pay:
             _log_step(ctx, f"跳过 {action}（recipe.auto_pay = false，不真实付款）")
             continue
+        # 下单前必须通过价格校验，否则宁可不提交
+        if step.get("requires_submit") and step.get("verify_price"):
+            ok = run_steps(
+                ctx,
+                [{"action": "verify_price", "price": step.get("verify_price")}],
+                phase=None,
+            )
+            if not ok:
+                _log_step(ctx, f"跳过 {action}（价格校验未通过）")
+                continue
+
         handler = ACTIONS.get(action)
         if handler is None:
             _log_step(ctx, f"未知动作 {action!r}，跳过")

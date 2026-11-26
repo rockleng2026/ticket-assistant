@@ -228,6 +228,18 @@ def apply_params_to_recipe(recipe: Recipe, task: Task) -> Recipe:
             for inner in step.get("steps", []):
                 if inner.get("action") == "select_tier":
                     inner["priority"] = list(prices)
+        # 下单前的价格校验也要跟着任务的价格走
+        if step.get("requires_submit") and step.get("verify_price"):
+            step["verify_price"] = list(prices)[0] if prices else step["verify_price"]
+        # 预约核对（观演人/票档/票张数）也要跟着任务参数走
+        if step.get("action") == "check_reservation":
+            if prices:
+                step["tier"] = prices[0]
+            step["quantity"] = recipe.concert.quantity
+        # 票档网格坐标也要跟着任务的优先级走（网格顺序 = 优先级顺序）
+        if step.get("action") == "select_tier" and step.get("coords"):
+            if "tier_coords" in recipe.selectors:
+                step["coords"] = list(recipe.selectors["tier_coords"])
     return recipe
 
 
