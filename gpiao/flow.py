@@ -15,7 +15,9 @@ phase 含义：
 from __future__ import annotations
 
 import logging
+import re
 import time
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -133,14 +135,28 @@ def _act_search(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
 def _act_tap(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     name = step["target"]
     t = ctx.target(name)
-    ok = t.click(ctx.device, ctx.screen_size())
-    time.sleep(step.get("settle", 0.6))
-    if ok:
-        _log_step(ctx, f"点击 {name} 成功")
-    else:
+    size = ctx.screen_size()
+    m = t.find(ctx.device, size)
+    if m is None:
         _log_step(ctx, f"点击 {name} 失败（候选全部未命中）")
         _safe_shot(ctx, f"fail-{name}")
-    return StepResult("tap", ok, name)
+        return StepResult("tap", False, name)
+
+    t.click_match(m, ctx.device, size)
+
+    # 用轮询代替盲等：目标一出现就走，不把固定等待时间等满
+    until_name = step.get("until")
+    if until_name and ctx.has_target(until_name):
+        until_t = ctx.target(until_name)
+        ok, took = until_t.poll(ctx.device, float(step.get("until_timeout", 2.5)), size)
+        _log_step(ctx, f"点击 {name} 成功，等待 {until_name} {'出现' if ok else '超时'}（{took:.2f}s）")
+        time.sleep(float(step.get("settle", 0.1)))
+        return StepResult("tap", ok, name)
+
+    time.sleep(step.get("settle", 0.6))
+    _log_step(ctx, f"点击 {name} 成功")
+    return StepResult("tap", True, name)
+
 
 
 def _act_tap_text(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
@@ -237,20 +253,33 @@ def _act_select(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
 
 
 def _act_select_quantity(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
-    """通过「+」按钮增加数量；数量已是目标值时跳过。"""
+    """通过「+」按钮增加数量；数量已是目标值时跳过。
+
+    数量行没有文本标识（「+」是画出来的 ImageView），所以用坐标；
+    点击后靠「N张」文本校验，避免多点/少点。
+    """
     count = int(step.get("count", ctx.recipe.concert.quantity))
     plus_name = step.get("plus_target", "qty_plus")
+    current = int(step.get("current", 1))
+    size = ctx.screen_size()
+
+    if count <= current:
+        _log_step(ctx, f"数量已是 {current} 张，无需点击")
+        return StepResult("select_quantity", True, str(count))
     if not ctx.has_target(plus_name):
         _log_step(ctx, f"未定义 {plus_name}，跳过数量设置")
         return StepResult("select_quantity", True, "skipped")
     plus = ctx.target(plus_name)
-    current = int(step.get("current", 1))
-    for _ in range(max(0, count - current)):
-        if not plus.click(ctx.device, ctx.screen_size()):
+
+    for _ in range(count - current):
+        m = plus.find(ctx.device, size)
+        if m is None:
             break
-        time.sleep(0.35)
+        plus.click_match(m, ctx.device, size)
+        time.sleep(float(step.get("settle", 0.12)))
     _log_step(ctx, f"数量设置目标 {count} 张")
     return StepResult("select_quantity", True, str(count))
+
 
 
 def _act_burst(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
@@ -283,7 +312,7 @@ def _act_burst(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     clicks = 0
     hit = False
     last_check = 0.0
-    check_every = float(step.get("check_every_ms", 400)) / 1000.0
+    check_every = float(step.get("check_every_ms", 150)) / 1000.0
 
     while time.monotonic() < deadline:
         now = time.monotonic()
@@ -295,10 +324,10 @@ def _act_burst(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
             # 弹层挡路：先清弹层，清完继续点
             for blk in blockers:
                 if blk.exists(ctx.device, size):
-                    _log_step(ctx, f"检测到遮挡弹层，先清除")
+                    _log_step(ctx, "检测到遮挡弹层，先清除")
                     _expand_dialog(ctx, blk, size, blocker_expand)
                     blk.click(ctx.device, size)
-                    time.sleep(0.8)
+                    time.sleep(0.6)
                     break
 
         if mode == "query":
@@ -310,9 +339,11 @@ def _act_burst(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
         if ok:
             clicks += 1
         else:
-            time.sleep(0.08)
+            time.sleep(0.05)
             continue
-        time.sleep(interval)
+        # 节流靠 until 检查本身（每次 ~40-170ms），不再额外 sleep
+        time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+
 
     if until_target is not None:
         hit = hit or until_target.exists(ctx.device, size)
@@ -515,8 +546,8 @@ def _page_has(ctx: FlowContext, text: str) -> bool:
             return False
 
 
-def _wait_stable(target: Target, device, max_wait: float = 0.6) -> None:
-    """等目标的位置稳定下来再点。
+def _wait_stable(target: Target, device, max_wait: float = 0.35):
+    """等目标的位置稳定下来再点，并返回稳定后的节点（省一次查询）。
 
     购票面板是底部弹层，弹出时有个上滑动画。动画没结束就按坐标点，
     会打在旧位置上——表现就是"点了没反应"，很容易被误判成"没票"。
@@ -524,33 +555,36 @@ def _wait_stable(target: Target, device, max_wait: float = 0.6) -> None:
     deadline = time.monotonic() + max_wait
     last = None
     stable = 0
+    match = None
     while time.monotonic() < deadline:
-        m = target.find(device)
-        cur = m.bounds if m else None
+        match = target.find(device)
+        cur = match.bounds if match else None
         if cur is not None and cur == last:
             stable += 1
             if stable >= 2:
-                return
+                return match
         else:
             stable = 0
         last = cur
-        time.sleep(0.1)
+        time.sleep(0.06)
+    return match
 
 
 def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
-    """按优先级逐个尝试票档：680 → 480 → 880。
+    """按优先级逐个尝试票档：380 → 480 → ...
 
     **抢票语义**：优先级是一个「可接受价格清单」，不是「只买第一档」。
       * 优先点最靠前的那一档（最快锁定最想要的价格）
       * 这一档点了没反应（售罄/不可售）→ 立刻换下一档重试确认流程
-      * 每一档都要**快速决断**：点完只做一次轻量校验（选中才会出现「数量」行），
-        校验通过立刻进入下单流程，不做任何多余等待
+      * 每一档都要**快速决断**：点完只做一次轻量校验（选中才会出现「数量」行）
       * 总耗时受 total_budget 约束，避免在抢票窗口里耗光时间
+
+    速度：全程只查 2 次（定位 + 校验），点击复用已找到的节点，不重复查询。
     """
     priority = step.get("priority") or ctx.recipe.concert.tier_priority
     size = ctx.screen_size()
-    wait = float(step.get("wait", 1.2))          # 只等首个候选出现
-    settle = float(step.get("settle", 0.35))
+    wait = float(step.get("wait", 0.8))          # 只等首个候选出现
+    settle = float(step.get("settle", 0.15))
     budget = float(step.get("total_budget", 5.0))
 
     # 从游标继续：上一轮已经试过并且失败的档不再重复浪费时间
@@ -566,158 +600,165 @@ def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
         candidates = [{"text": price}, {"textContains": price.lstrip("¥￥")}]
         target = Target.from_dict("inline", {"candidates": candidates})
         # 只有第一档给足等待；后面的档只有在"压根没有这个档"时才用到
-        found = target.wait(ctx.device, wait if idx == start else 0.35, size)
+        found = target.wait(ctx.device, wait if idx == start else 0.3, size)
         if found is None:
             _log_step(ctx, f"票档 {price}: 本场次没有该档，换下一档")
             continue
 
-        # 等弹层动画结束，位置稳定了再点
-        _wait_stable(target, ctx.device, float(step.get("stable_wait", 0.6)))
+        # 等弹层动画位置稳定，再点（否则容易打在旧位置）
+        found = _wait_stable(target, ctx.device, float(step.get("stable_wait", 0.35))) or found
 
-        target.click(ctx.device, size)
+        target.click_match(found, ctx.device, size)
         time.sleep(settle)
+        # 轻量校验：选中后才会出现「数量」行
         if _page_has(ctx, "数量"):
             ctx.tier_cursor = idx + 1
             _log_step(ctx, f"票档 {price}: 选中成功")
             return StepResult("select_tier", True, price)
 
         # 可能是动画没赶上（点空了），再点一次再判定
-        time.sleep(0.15)
-        target.click(ctx.device, size)
-        time.sleep(settle)
-        if _page_has(ctx, "数量"):
-            ctx.tier_cursor = idx + 1
-            _log_step(ctx, f"票档 {price}: 选中成功（补点一次）")
-            return StepResult("select_tier", True, price)
+        time.sleep(0.1)
+        found = target.find(ctx.device, size)
+        if found is not None:
+            target.click_match(found, ctx.device, size)
+            time.sleep(settle)
+            if _page_has(ctx, "数量"):
+                ctx.tier_cursor = idx + 1
+                _log_step(ctx, f"票档 {price}: 选中成功（补点一次）")
+                return StepResult("select_tier", True, price)
 
         _log_step(ctx, f"票档 {price}: 无票/点不动，立即换下一档")
     _safe_shot(ctx, "select-tier-fail")
     return StepResult("select_tier", False, ",".join(str(p) for p in priority))
 
 
-def _act_select_attendees(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
-    """校验/补选实名观演人。
 
-    订单页会显示「需选择 N 位；入场需携带对应证件」。N 必须等于票数，
-    否则「立即支付」点不动。
+def _find_attendee_circles(ctx: FlowContext, size):
+    """找出「确认购票」页上的实名观演人勾选圈。
 
-    快路径（抢票时至关重要）：一次查询判断是否已满足，满足就直接走，
-    整个校验 ~150ms。只有真的不满足才走慢路径去补选。
+    勾选圈是画出来的图标：没有 text / desc / checked 属性，
+    特征是「在页面右侧、方形、尺寸不大」，而且位于
+    「实名观演人」标题和「取票方式」标题之间。
+    返回 [(x, y), ...]，按从上到下排序。
     """
-    import re
-
-    required = int(step.get("count", ctx.recipe.concert.attendees))
-    size = ctx.screen_size()
-
-    def pending() -> int:
-        """还需选择的位数；-1 表示页面还没加载出来；0 表示已满足。"""
-        try:
-            xml = ctx.device.u2.dump_hierarchy()
-        except Exception:  # noqa: BLE001
-            return -1
-        for t in re.findall(r'text="([^"]*)"', xml):
-            if "需选择" in t:
-                m = re.search(r"(\d+)", t)
-                if m:
-                    return int(m.group(1))
-        return 0
-
-    need = pending()
-    if need == 0:
-        _log_step(ctx, "实名观演人: 已满足，直接下单")
-        return StepResult("select_attendees", True, "0")
-    if need < 0:
-        _log_step(ctx, "实名观演人: 页面未加载，跳过校验")
-        return StepResult("select_attendees", True, "unknown")
-    if need != required:
-        _log_step(ctx, f"实名观演人: 需 {need} 位，但票数 {required} 位 —— 数量不匹配")
-        _safe_shot(ctx, "attendee-mismatch")
-        return StepResult("select_attendees", False, f"need={need} want={required}")
-
-    # 慢路径：进「确认购票」页挑观演人
-    _log_step(ctx, f"实名观演人: 还需 {need} 位，进入选择流程")
-    entry = Target.from_dict("inline", {"text": step.get("entry", "需选择")})
-    if entry.exists(ctx.device, size):
-        entry.click(ctx.device, size)
-        time.sleep(1.2)
-    else:
-        add = Target.from_dict("inline", {"text": "新增"})
-        if add.exists(ctx.device, size):
-            add.click(ctx.device, size)
-            time.sleep(1.2)
-        else:
-            _log_step(ctx, "实名观演人: 找不到入口")
-            return StepResult("select_attendees", False, "no-entry")
-
-    _select_unchecked_boxes(ctx, size)
-
-    confirm = Target.from_dict("inline", {"text": step.get("confirm", "确认选择")})
-    if confirm.exists(ctx.device, size):
-        confirm.click(ctx.device, size)
-        time.sleep(1.8)
-
-    need_after = pending()
-    ok = need_after <= 0
-    _log_step(ctx, f"实名观演人: 选择后仍需 {need_after} 位")
-    _safe_shot(ctx, "attendee-result")
-    return StepResult("select_attendees", ok, str(need_after))
-
-
-def _select_unchecked_boxes(ctx: FlowContext, size) -> None:
-    """在「确认购票」页把没勾上的观演人勾上。
-
-    勾选圈没有 resource-id / text / checked 属性，只能靠：
-      1. 用观演人姓名节点的 y 定位同一行的勾选圈（固定在最右侧 x）
-      2. 截图像素判断圈里有没有红色（勾上的圈是红色实心）
-    """
-    import re
-
     try:
-        from PIL import Image
+        from lxml import etree
     except Exception:  # noqa: BLE001
-        return
+        return []
 
     try:
         xml = ctx.device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
     except Exception:  # noqa: BLE001
-        return
+        return []
 
-    # 观演人行：左侧姓名（x < 400） + 右侧勾选圈（x ≈ 1150）
-    rows = []
-    for m in re.finditer(r"<node[^>]*>", xml):
-        v = m.group(0)
-        t = re.search(r'text="([^"]*)"', v)
-        b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', v)
-        if not (t and b):
+    w, h = size
+    # 先定位「实名观演人」和「取票方式」两个标题，圈就在它们之间
+    top, bottom = 0, h
+    for node in root.iter("node"):
+        t = node.get("text", "") or ""
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
             continue
-        x1, y1, x2, y2 = map(int, b.groups())
-        text = t.group(1)
-        # 身份证号那行最稳：格式 身份证 xxx
-        if "身份证" in text and x1 < 400:
-            rows.append(((y1 + y2) // 2, text))
-    if not rows:
-        return
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if t.strip() == "实名观演人":
+            top = y1
+        elif t.strip() == "取票方式":
+            bottom = y1
+            break
+    if top == 0:
+        top = int(h * 0.15)
 
+    circles = []
+    for node in root.iter("node"):
+        cls = node.get("class", "") or ""
+        if not (cls.endswith("ImageView") or cls.endswith("Image")):
+            continue
+        b = node.get("bounds", "") or ""
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        if not (x1 >= w * 0.75 and top <= y1 and y2 <= bottom + 20):
+            continue
+        if not (40 <= (x2 - x1) <= 160 and 40 <= (y2 - y1) <= 160):
+            continue
+        circles.append(((x1 + x2) // 2, (y1 + y2) // 2))
+    return sorted(circles, key=lambda c: c[1])
+
+
+def _is_red(ctx: FlowContext, point, radius: int = 45) -> bool:
+    """像素判断勾选圈是不是「已勾选」（红色实心）。"""
+    try:
+        from PIL import Image
+    except Exception:  # noqa: BLE001
+        return False
     try:
         shot = ctx.device.u2.screenshot().convert("RGB")
+        x, y = point
+        box = (
+            max(0, x - radius),
+            max(0, y - radius),
+            min(shot.size[0], x + radius),
+            min(shot.size[1], y + radius),
+        )
+        px = list(shot.crop(box).getdata())
     except Exception:  # noqa: BLE001
-        return
+        return False
+    if not px:
+        return False
+    red = sum(1 for r, g_, b in px if r > 140 and g_ < 90 and b < 90)
+    return red / len(px) >= 0.02
 
-    right_x = int(size[0] * 0.88)
-    for cy, text in rows:
-        box = (right_x - 60, cy - 45, right_x + 60, cy + 45)
-        try:
-            crop = shot.crop(box)
-        except Exception:  # noqa: BLE001
+
+def _act_select_attendees(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
+    """校验/补选实名观演人。
+
+    订单页（标题「确认购票」）上，每个观演人右侧有一个圆形勾选框：
+    红圈 = 已选，空圈 = 未选。票数 N 就必须勾满 N 个，否则「立即支付」点不动。
+
+    页面上的「需选择 N 位」是**总位数**（不是"还差几位"），
+    所以判定方式只能是"数红圈"：
+      * 红圈数 >= 票数 -> 直接走（快路径，一次截图判断）
+      * 红圈数不足     -> 点空圈补选，再复核一次
+    """
+    required = int(step.get("count", ctx.recipe.concert.attendees))
+    size = ctx.screen_size()
+
+    def state():
+        circles = _find_attendee_circles(ctx, size)
+        checked = [c for c in circles if _is_red(ctx, c)]
+        return circles, checked
+
+    circles, checked = state()
+    if not circles:
+        _log_step(ctx, "实名观演人: 没找到勾选圈（页面可能还没到订单页）")
+        return StepResult("select_attendees", True, "no-circles")
+
+    _log_step(ctx, f"实名观演人: 共 {len(circles)} 位，已选 {len(checked)} 位（需要 {required} 位）")
+    if len(checked) >= required:
+        return StepResult("select_attendees", True, str(len(checked)))
+
+    # 补选：点空圈
+    for c in circles:
+        if len(checked) >= required:
+            break
+        if _is_red(ctx, c):
             continue
-        px = list(crop.getdata())
-        if not px:
-            continue
-        red = sum(1 for r, g_, b in px if r > 140 and g_ < 90 and b < 90)
-        if red / len(px) < 0.04:
-            ctx.device.click(right_x, cy)
-            time.sleep(0.6)
-            _log_step(ctx, f"勾选观演人行 @y={cy}")
+        _log_step(ctx, f"勾选观演人 @({c[0]},{c[1]})")
+        ctx.device.click(*c)
+        time.sleep(0.45)
+
+    circles, checked = state()
+    ok = len(checked) >= required
+    _log_step(ctx, f"实名观演人: 补选后已选 {len(checked)}/{required} 位")
+    _safe_shot(ctx, "attendee-result")
+    if not ok:
+        _log_step(ctx, "实名观演人: 数量不足 —— App 里可能没存够观演人信息")
+    return StepResult("select_attendees", ok, str(len(checked)))
+
+
 
 
 def _act_wake(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
@@ -753,6 +794,7 @@ def _act_wake(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
 
 
 def _act_scroll_top(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
+
     """把页面滚回顶部。
 
     美团演出详情页是整页滚动的，返回页面后滚动位置会残留——底部「立即购票」

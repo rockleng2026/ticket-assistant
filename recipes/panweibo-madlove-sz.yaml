@@ -264,5 +264,5 @@ steps:
   phase: post
   message: 已生成订单并进入支付页，请核对金额与观演人信息后手动支付
 stop_before_payment: true
-submit_order: true
+submit_order: false
 auto_pay: false

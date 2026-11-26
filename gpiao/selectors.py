@@ -341,8 +341,12 @@ class Target:
                 continue
             limit = count if cand.index == 0 else min(count, cand.index + 1)
             for i in range(limit):
-                node = sel[i]
-                info = getattr(node, "info", None)
+                try:
+                    node = sel[i]
+                    info = getattr(node, "info", None)
+                except Exception:  # noqa: BLE001
+                    # count 之后元素可能刚好消失（页面在跳转），跳过即可
+                    continue
                 bounds = _to_bounds(info)
                 clickable = False
                 text = ""
@@ -393,6 +397,21 @@ class Target:
                 return None
             time.sleep(0.12)
 
+    def poll(self, device, timeout: float, screen_size=None, interval: float = 0.08):
+        """轮询等待目标出现，返回 (是否出现, 耗时秒)。
+
+        比「盲等固定秒数」快得多：页面一就绪立刻返回，
+        不用把固定等待时间等满。
+        """
+        t0 = time.monotonic()
+        deadline = t0 + timeout
+        while True:
+            if self.exists(device, screen_size):
+                return True, time.monotonic() - t0
+            if time.monotonic() >= deadline:
+                return False, time.monotonic() - t0
+            time.sleep(interval)
+
     # ------------- 操作 -------------
 
     def click(self, device, screen_size=None, dry_run: bool = False) -> bool:
@@ -401,6 +420,14 @@ class Target:
         m = self.find(device, screen_size)
         if m is None:
             return False
+        return self.click_match(m, device, screen_size, dry_run=dry_run)
+
+    def click_match(self, m: "Match", device, screen_size=None, dry_run: bool = False) -> bool:
+        """用已经 find 出来的节点直接点击（不再查一次）。
+
+        热路径上每省一次查询就是 100~250ms，这是最划算的优化。
+        """
+        screen_size = screen_size or device.screen().size
         if dry_run:
             return True
         if m.candidate.is_coord:

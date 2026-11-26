@@ -259,6 +259,16 @@ def cmd_task(args) -> int:
         taskmod.bind_recipe(root, t)
         recipe = load_recipe(Path(root) / t.recipe)
 
+        # 「生成订单」和「付款」默认关闭，必须显式开启
+        if getattr(args, "submit", False):
+            recipe.submit_order = True
+        if getattr(args, "auto_pay", False):
+            recipe.auto_pay = True
+            recipe.submit_order = True
+        if not recipe.submit_order:
+            print("  （本次不会点「立即支付」—— 加 --submit 才生成订单）")
+
+
         print(f"▶ 任务 {t.id}")
         print(f"  {t.name}")
         print(f"  开售 {t.sale_text()}  |  距开抢 {t.countdown_text()}")
@@ -579,6 +589,14 @@ def cmd_run(args) -> int:
         print("配方没有设置 sale.at，无法定时触发")
         return 1
 
+    # 「生成订单」和「付款」都是真金白银，默认关闭，必须显式开启
+    if getattr(args, "submit", False):
+        recipe.submit_order = True
+    if getattr(args, "auto_pay", False):
+        recipe.auto_pay = True
+        recipe.submit_order = True
+
+
     # 开跑前确认 价格 / 数量 / 观演人
     if not args.yes:
         from .ask import ask, save as save_ask
@@ -765,6 +783,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--wait-now", action="store_true", help="还没到准备时间就原地等待")
     c.add_argument("--arm-only", action="store_true", help="只做准备阶段，不等待不抢购")
     c.add_argument("--force", action="store_true", help="自检不通过也强行继续")
+    c.add_argument("--submit", action="store_true", help="允许点「立即支付」生成订单（会锁票）")
+    c.add_argument("--auto-pay", action="store_true", help="允许自动完成付款（会真的扣钱）")
     c.set_defaults(func=cmd_task)
 
     c = tsp.add_parser("run", help="立刻执行任务（不等准备时间）")
@@ -809,7 +829,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--connect")
     sp.add_argument("--skip-wait", action="store_true", help="不等待，立即触发（演练用）")
     sp.add_argument("--yes", "-y", action="store_true", help="跳过开跑前的参数问询")
+    sp.add_argument("--submit", action="store_true", help="允许点「立即支付」生成订单（会锁票）")
+    sp.add_argument("--auto-pay", action="store_true", help="允许自动完成付款（会真的扣钱）")
     sp.set_defaults(func=cmd_run)
+
 
     sp = sub.add_parser("fire", help="直接执行到点抢购（设备已就位）")
     sp.add_argument("-r", "--recipe", required=True)

@@ -36,7 +36,7 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
         },
         "device": {"connect": None, "serial": None, "auto_prepare": True},
         "stop_before_payment": True,
-        "submit_order": True,
+        "submit_order": False,
         "auto_pay": False,
         "selectors": {
             # 首页金刚区（注意是 content-desc，不是 text）
@@ -83,6 +83,15 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                     {"text": "确认购票"},
                     {"textContains": "需选择"},
                     {"textContains": "总计"},
+                ]
+            },
+            # 支付页标志（立即支付之后）
+            "payment_ready": {
+                "candidates": [
+                    {"textContains": "支付方式"},
+                    {"textContains": "月付交易"},
+                    {"textContains": "交易剩余时间"},
+                    {"text": "美团支付"},
                 ]
             },
             "tier": {"candidates": [{"text": "¥680"}, {"text": "￥680"}, {"text": "680"}]},
@@ -172,8 +181,8 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "until": "ticket_ready",
                 "mode": "auto",
                 "window": 8.0,
-                "interval_ms": 180,
-                "check_every_ms": 350,
+                "interval_ms": 120,
+                "check_every_ms": 150,
                 "blockers": ["我已阅读并同意", "知道了"],
             },
             # 抢到后（热路径）
@@ -186,10 +195,10 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "steps": [
                     {
                         "action": "select_tier",
-                        "priority": ["¥680"],
+                        "priority": ["¥380", "¥480"],
                         "wait": 0.8,
-                        "settle": 0.35,
-                        "stable_wait": 0.6,
+                        "settle": 0.15,
+                        "stable_wait": 0.35,
                         "total_budget": 4.0,
                         "optional": True,
                     },
@@ -197,9 +206,17 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                         "action": "select_quantity",
                         "plus_target": "qty_plus",
                         "current": 1,
+                        "settle": 0.12,
                         "optional": True,
                     },
-                    {"action": "tap", "target": "confirm_button", "settle": 1.0, "optional": True},
+                    {
+                        "action": "tap",
+                        "target": "confirm_button",
+                        "until": "order_ready",
+                        "until_timeout": 2.5,
+                        "settle": 0.1,
+                        "optional": True,
+                    },
                 ],
             },
             {
@@ -213,7 +230,9 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "action": "tap",
                 "phase": "post",
                 "target": "pay_button",
-                "settle": 1.8,
+                "until": "payment_ready",
+                "until_timeout": 6.0,
+                "settle": 0.1,
                 "requires_submit": True,
                 "optional": True,
             },
@@ -263,7 +282,7 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
         },
         "device": {"connect": None, "serial": None, "auto_prepare": True},
         "stop_before_payment": True,
-        "submit_order": True,
+        "submit_order": False,
         "auto_pay": False,
         "selectors": {
             # TODO 标定：python -m gpiao record -r <recipe> -t <名字>

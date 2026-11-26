@@ -186,6 +186,17 @@ class DeviceConfig:
         )
 
 
+def _sync_tier_in(step: Dict[str, Any], prices: List[str]) -> None:
+    """递归把价格优先级写进步骤树（loop 里还嵌着子步骤）。"""
+    if not isinstance(step, dict):
+        return
+    if step.get("action") == "select_tier":
+        step["priority"] = list(prices)
+    for key in ("steps", "rules"):
+        for sub in step.get(key, []) or []:
+            _sync_tier_in(sub, prices)
+
+
 @dataclasses.dataclass
 class Recipe:
     name: str = "未命名配方"
@@ -218,8 +229,21 @@ class Recipe:
             auto_pay=bool(raw.get("auto_pay", False)),
             source_path=path,
         )
+        recipe.sync_tier_priority()
         recipe.validate()
         return recipe
+
+    def sync_tier_priority(self) -> None:
+        """把 concert.tier_priority 同步进所有 select_tier 步骤。
+
+        不做这件事的话，配方里改价格只改了 concert、步骤里还留着旧价格，
+        就会先在根本不存在的票价上白等一轮（实测浪费 1.1s 热路径时间）。
+        """
+        prices = list(self.concert.tier_priority or [])
+        if not prices:
+            return
+        for step in self.steps:
+            _sync_tier_in(step, prices)
 
     def validate(self) -> None:
         if not self.steps:
