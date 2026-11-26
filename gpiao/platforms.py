@@ -76,13 +76,15 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 ]
             },
             "session_item": {"candidates": [{"textContains": "19:"}, {"textContains": "19:00"}]},
-            # 订单页标志
+            # 订单页标志。必须用**只在订单页出现**的文案：
+            # 「总计」「需选择」在票档面板里也有，用它们会误判成已到订单页，
+            # 导致「确认」还没生效就进入下一步。
             "order_ready": {
                 "candidates": [
+                    {"text": "实名观演人"},
+                    {"text": "取票方式"},
                     {"text": "立即支付"},
-                    {"text": "确认购票"},
-                    {"textContains": "需选择"},
-                    {"textContains": "总计"},
+                    {"textContains": "支付成功后"},
                 ]
             },
             # 支付页标志（立即支付之后）
@@ -214,6 +216,7 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                         "target": "confirm_button",
                         "until": "order_ready",
                         "until_timeout": 2.5,
+                        "retry": 2,
                         "settle": 0.1,
                         "optional": True,
                     },

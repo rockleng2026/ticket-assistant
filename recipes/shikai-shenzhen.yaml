@@ -14,9 +14,9 @@ concert:
   - ¥680
   - ¥480
   - ¥880
-  quantity: 1
+  quantity: 2
   max_price: 1180
-  attendees: 1
+  attendees: 2
 sale:
   at: '2026-11-24 12:14:00'
   lead_seconds: 1.2
@@ -81,10 +81,10 @@ selectors:
     - textContains: '19:00'
   order_ready:
     candidates:
+    - text: 实名观演人
+    - text: 取票方式
     - text: 立即支付
-    - text: 确认购票
-    - textContains: 需选择
-    - textContains: 总计
+    - textContains: 支付成功后
   payment_ready:
     candidates:
     - textContains: 支付方式
@@ -238,8 +238,6 @@ steps:
   - action: select_tier
     priority:
     - ¥680
-    - ¥480
-    - ¥880
     wait: 0.8
     settle: 0.15
     stable_wait: 0.35
@@ -254,6 +252,7 @@ steps:
     target: confirm_button
     until: order_ready
     until_timeout: 2.5
+    retry: 2
     settle: 0.1
     optional: true
 - action: select_attendees

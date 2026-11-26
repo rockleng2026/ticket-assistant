@@ -12,6 +12,7 @@ concert:
   tier: null
   tier_priority:
   - ¥380
+  - ¥480
   quantity: 2
   max_price: null
   attendees: 2
@@ -79,10 +80,16 @@ selectors:
     - textContains: '19:00'
   order_ready:
     candidates:
+    - text: 实名观演人
+    - text: 取票方式
     - text: 立即支付
-    - text: 确认购票
-    - textContains: 需选择
-    - textContains: 总计
+    - textContains: 支付成功后
+  payment_ready:
+    candidates:
+    - textContains: 支付方式
+    - textContains: 月付交易
+    - textContains: 交易剩余时间
+    - text: 美团支付
   tier:
     candidates:
     - text: ¥680
@@ -216,8 +223,8 @@ steps:
   until: ticket_ready
   mode: auto
   window: 8.0
-  interval_ms: 180
-  check_every_ms: 350
+  interval_ms: 120
+  check_every_ms: 150
   blockers:
   - 我已阅读并同意
   - 知道了
@@ -230,18 +237,23 @@ steps:
   - action: select_tier
     priority:
     - ¥380
+    - ¥480
     wait: 0.8
-    settle: 0.35
-    stable_wait: 0.6
+    settle: 0.15
+    stable_wait: 0.35
     total_budget: 4.0
     optional: true
   - action: select_quantity
     plus_target: qty_plus
     current: 1
+    settle: 0.12
     optional: true
   - action: tap
     target: confirm_button
-    settle: 1.0
+    until: order_ready
+    until_timeout: 2.5
+    retry: 2
+    settle: 0.1
     optional: true
 - action: select_attendees
   phase: post
@@ -251,7 +263,9 @@ steps:
 - action: tap
   phase: post
   target: pay_button
-  settle: 1.8
+  until: payment_ready
+  until_timeout: 6.0
+  settle: 0.1
   requires_submit: true
   optional: true
 - action: tap

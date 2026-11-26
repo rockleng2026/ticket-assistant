@@ -136,26 +136,36 @@ def _act_tap(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     name = step["target"]
     t = ctx.target(name)
     size = ctx.screen_size()
-    m = t.find(ctx.device, size)
-    if m is None:
-        _log_step(ctx, f"点击 {name} 失败（候选全部未命中）")
-        _safe_shot(ctx, f"fail-{name}")
-        return StepResult("tap", False, name)
-
-    t.click_match(m, ctx.device, size)
-
-    # 用轮询代替盲等：目标一出现就走，不把固定等待时间等满
     until_name = step.get("until")
-    if until_name and ctx.has_target(until_name):
-        until_t = ctx.target(until_name)
-        ok, took = until_t.poll(ctx.device, float(step.get("until_timeout", 2.5)), size)
-        _log_step(ctx, f"点击 {name} 成功，等待 {until_name} {'出现' if ok else '超时'}（{took:.2f}s）")
-        time.sleep(float(step.get("settle", 0.1)))
-        return StepResult("tap", ok, name)
+    until_t = ctx.target(until_name) if until_name and ctx.has_target(until_name) else None
+    retries = int(step.get("retry", 0))
+    timeout = float(step.get("until_timeout", 2.5))
 
-    time.sleep(step.get("settle", 0.6))
-    _log_step(ctx, f"点击 {name} 成功")
-    return StepResult("tap", True, name)
+    for attempt in range(retries + 1):
+        m = t.find(ctx.device, size)
+        if m is None:
+            _log_step(ctx, f"点击 {name} 失败（候选全部未命中）")
+            _safe_shot(ctx, f"fail-{name}")
+            return StepResult("tap", False, name)
+        t.click_match(m, ctx.device, size)
+
+        if until_t is not None:
+            ok, took = until_t.poll(ctx.device, timeout, size)
+            if ok:
+                _log_step(ctx, f"点击 {name} 成功，等待 {until_name} 出现（{took:.2f}s）")
+                time.sleep(float(step.get("settle", 0.1)))
+                return StepResult("tap", True, name)
+            if attempt < retries:
+                _log_step(ctx, f"点击 {name} 后未出现 {until_name}，重试（第 {attempt + 2} 次）")
+                time.sleep(0.25)
+                continue
+            _log_step(ctx, f"点击 {name} 后 {until_name} 未出现（超时 {timeout}s）")
+            return StepResult("tap", False, name)
+
+        time.sleep(step.get("settle", 0.6))
+        _log_step(ctx, f"点击 {name} 成功")
+        return StepResult("tap", True, name)
+    return StepResult("tap", False, name)
 
 
 
@@ -634,11 +644,12 @@ def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
 
 
 def _find_attendee_circles(ctx: FlowContext, size):
-    """找出「确认购票」页上的实名观演人勾选圈。
+    """找出订单页上每个实名观演人的勾选圈。
 
-    勾选圈是画出来的图标：没有 text / desc / checked 属性，
-    特征是「在页面右侧、方形、尺寸不大」，而且位于
-    「实名观演人」标题和「取票方式」标题之间。
+    勾选圈是画出来的图标：没有 text / desc / checked 属性。
+    锚点用「身份证 xxx」这一行（每个观演人必有一行），圈就在它同一行右侧，
+    比用「实名观演人」标题定位可靠得多（标题找不到时不会误判）。
+
     返回 [(x, y), ...]，按从上到下排序。
     """
     try:
@@ -653,22 +664,22 @@ def _find_attendee_circles(ctx: FlowContext, size):
         return []
 
     w, h = size
-    # 先定位「实名观演人」和「取票方式」两个标题，圈就在它们之间
-    top, bottom = 0, h
+    # 观演人行：以「身份证」文本为锚
+    row_ys = []
     for node in root.iter("node"):
-        t = node.get("text", "") or ""
+        t = (node.get("text", "") or "").strip()
+        if "身份证" not in t:
+            continue
         b = node.get("bounds", "") or ""
         m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
         if not m:
             continue
         x1, y1, x2, y2 = (int(g) for g in m.groups())
-        if t.strip() == "实名观演人":
-            top = y1
-        elif t.strip() == "取票方式":
-            bottom = y1
-            break
-    if top == 0:
-        top = int(h * 0.15)
+        if x1 > w * 0.4:      # 身份证那行是左对齐的
+            continue
+        row_ys.append((y1 + y2) // 2)
+    if not row_ys:
+        return []
 
     circles = []
     for node in root.iter("node"):
@@ -680,11 +691,15 @@ def _find_attendee_circles(ctx: FlowContext, size):
         if not m:
             continue
         x1, y1, x2, y2 = (int(g) for g in m.groups())
-        if not (x1 >= w * 0.75 and top <= y1 and y2 <= bottom + 20):
+        if x1 < w * 0.75:
             continue
         if not (40 <= (x2 - x1) <= 160 and 40 <= (y2 - y1) <= 160):
             continue
-        circles.append(((x1 + x2) // 2, (y1 + y2) // 2))
+        cy = (y1 + y2) // 2
+        # 圈和身份证行同高（允许上下 70px 的偏差）
+        if not any(abs(cy - ry) <= 70 for ry in row_ys):
+            continue
+        circles.append(((x1 + x2) // 2, cy))
     return sorted(circles, key=lambda c: c[1])
 
 
