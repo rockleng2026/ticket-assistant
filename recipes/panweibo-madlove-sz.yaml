@@ -19,7 +19,7 @@ concert:
   result_match: MADLOVE
 sale:
   at: '2026-11-27 13:22:00'
-  lead_seconds: 0.5
+  lead_seconds: 0.2
   burst_seconds: 8.0
   tap_interval_ms: 180
   timezone: UTC+08:00
@@ -227,6 +227,7 @@ steps:
   window: 8.0
   interval_ms: 120
   check_every_ms: 150
+  refresh_every: 6
   blockers:
   - 我已阅读并同意
   - 知道了

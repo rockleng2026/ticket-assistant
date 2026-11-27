@@ -629,13 +629,41 @@ class Target:
         except Exception:  # noqa: BLE001
             return False
 
+    def has_text_candidate(self) -> bool:
+        """目标是否含有「可按文本定位」的候选。
+
+        有文本候选时**不允许坐标盲点**：很多按钮在开售前是「已预约」，
+        盲点坐标会点到「取消预约」；而且开售前按钮可能压根不存在，
+        盲点就会点到页面别处（今天就因此把图片轮播点开了）。
+        """
+        text_keys = ("text", "textContains", "textMatches", "textStartsWith",
+                     "textNorm", "desc", "descContains", "descMatches", "xpath")
+        for c in self.candidates:
+            if any(k in c.raw for k in text_keys):
+                return True
+        return False
+
+    def click_real(self, device, screen_size=None) -> bool:
+        """只按「真实控件」点击，不使用坐标兜底（也不点画出来的圈/条）。"""
+        screen_size = screen_size or device.screen().size
+        m = self.find(device, screen_size, allow_coord=False)
+        if m is None:
+            return False
+        return self.click_match(m, device, screen_size)
+
     def click_fast(self, device, screen_size=None) -> bool:
         """极速点击：直接用兜底坐标落点，**不做任何 UI 查询**。
 
         到点那一瞬间每 100ms 的一次 uiautomator 查询就是全部的胜负手，
         所以这一步必须走零查询路径。坐标来自 record 标定时保存的屏幕比例。
+
+        **但只限「按钮本身没有文本」的情况**：一旦目标有文本候选
+        （比如「立即购票」），就必须按文本点 —— 盲点坐标会点到开售前的
+        「预约」从而取消预约，或者点到页面别处。
         """
         screen_size = screen_size or device.screen().size
+        if self.has_text_candidate():
+            return False
         for cand in self.candidates:
             if not cand.is_coord:
                 continue

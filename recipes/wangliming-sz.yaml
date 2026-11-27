@@ -64,6 +64,19 @@ selectors:
   session_marker:
     candidates:
     - textContains: 1月16日场次
+  sku_panel:
+    candidates:
+    - text: 选择票档
+    - text: 请选择票档
+    - textContains: 每笔订单限购
+    - textContains: 场次时间均为演出当地时间
+    - textContains: 预约想看票档
+  sku_confirm_text:
+    candidates:
+    - text: 确定
+    - text: 立即购买
+    - text: 立即下单
+    - text: 提交订单
   ticket_ready:
     candidates:
     - text: 票档
@@ -181,18 +194,19 @@ steps:
   tier: ¥380
   quantity: 2
   optional: true
-- action: wait
-  phase: pre
-  target: detail_ready
-  timeout: 15
-- action: scroll_top
-  phase: pre
-  times: 10
-  settle: 0.3
-- action: wait
+- action: tap
   phase: pre
   target: buy_button
-  timeout: 25
+  settle: 4.0
+  optional: true
+- action: wait
+  phase: pre
+  target: sku_panel
+  timeout: 20
+- action: scroll_top
+  phase: pre
+  times: 6
+  settle: 0.3
 - action: require
   phase: pre
   target: logged_out_marker
@@ -203,35 +217,17 @@ steps:
   prefix: armed
 - action: burst
   phase: fire
-  target: buy_button
-  until: ticket_ready
+  target: sku_confirm_text
+  until: order_ready
   mode: auto
-  window: 8.0
+  window: 10.0
   interval_ms: 120
   check_every_ms: 150
-- action: loop
-  phase: post
-  until: order_ready
-  max_rounds: 2
-  budget: 10
-  steps:
-  - action: select_tier_grid
-    priority:
-    - ¥380
-    - ¥580
-    grid_settle: 0.4
-    optional: true
-  - action: select_quantity
-    plus_target: qty_plus
-    current: 1
-    optional: true
-  - action: tap
-    target: sku_confirm
-    until: order_ready
-    until_timeout: 3.0
-    retry: 1
-    settle: 0.1
-    optional: true
+  refresh_every: 6
+  blockers:
+  - 我已阅读并同意
+  - 知道了
+  - 继续尝试
 - action: select_attendees
   phase: post
   entry: 实名观演人
@@ -241,8 +237,12 @@ steps:
   phase: post
   target: submit_button
   verify_price: ¥380
-  settle: 2.0
+  settle: 1.5
   requires_submit: true
+  blockers:
+  - 继续尝试
+  retry: 5
+  backoff: 2.0
   optional: true
 - action: stop
   phase: post

@@ -185,6 +185,8 @@ def _meituan_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "window": 8.0,
                 "interval_ms": 120,
                 "check_every_ms": 150,
+                # 预售演出开售前没有购买按钮，要下拉刷新才会出现
+                "refresh_every": 6,
                 "blockers": ["我已阅读并同意", "知道了"],
             },
             # 抢到后（热路径）
@@ -343,6 +345,28 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                     {"textContains": "01-16"},
                 ]
             },
+            # 票档面板标志：必须是**面板独有**的文案，
+            # 详情页也会出现「票档」字样，用它判断会误判成已进面板、一次都不点
+            "sku_panel": {
+                "candidates": [
+                    {"text": "选择票档"},
+                    {"text": "请选择票档"},
+                    {"textContains": "每笔订单限购"},
+                    # 大麦票价页面专属
+                    {"textContains": "场次时间均为演出当地时间"},
+                    {"textContains": "预约想看票档"},
+                ]
+            },
+            # 票价页面上的「确定 / 立即购买」——开售前是画出来的按钮（无文本），
+            # 所以开售前不会被误点；开售后才有文本，立刻能点
+            "sku_confirm_text": {
+                "candidates": [
+                    {"text": "确定"},
+                    {"text": "立即购买"},
+                    {"text": "立即下单"},
+                    {"text": "提交订单"},
+                ]
+            },
             # 购买面板标志（点完「立即购票」会进选票档页）
             "ticket_ready": {
                 "candidates": [
@@ -448,13 +472,17 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "action": "check_reservation",
                 "phase": "pre",
                 "tier": "¥380",
-                "quantity": 1,
+                "quantity": 2,
                 "optional": True,
             },
-            # 核对完会返回上一页，确认还在详情页（否则后面会点空）
-            {"action": "wait", "phase": "pre", "target": "detail_ready", "timeout": 15},
-            {"action": "scroll_top", "phase": "pre", "times": 10, "settle": 0.3},
-            {"action": "wait", "phase": "pre", "target": "buy_button", "timeout": 25},
+            # ★ 关键：开抢前就进到「票价页面」并停在这里。
+            #   开抢后票档/数量/观演人都由大麦的预约机制自动套用，
+            #   到点只需要点「确定」→ 订单页 → 立即提交，
+            #   比「详情页 → 再点立即购票 → 进票价页」少一跳、少两次盲选。
+            {"action": "tap", "phase": "pre", "target": "buy_button", "settle": 4.0, "optional": True},
+            # 确认进的是票价页（详情页也有「票档」字样，不能用它判断）
+            {"action": "wait", "phase": "pre", "target": "sku_panel", "timeout": 20},
+            {"action": "scroll_top", "phase": "pre", "times": 6, "settle": 0.3},
             {
                 "action": "require",
                 "phase": "pre",
@@ -463,47 +491,25 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "message": "大麦未登录，请先在 App 内登录",
             },
             {"action": "dump", "phase": "pre", "prefix": "armed"},
-            # 到点连点购买按钮
+            # 到点：在票价页面上直接点「确定 / 立即购买」
+            #   票档、数量、观演人此时已被大麦的预约机制自动套好，不用再操作
+            # 到点：在票价页面上直接点「确定 / 立即购买」
+            #   票档、数量、观演人此时已被大麦的预约机制自动套好，不用再操作
+            # 到点：在票价页面上直接点「确定 / 立即购买」
+            #   票档、数量、观演人此时已被大麦的预约机制自动套好，不用再操作
             {
                 "action": "burst",
                 "phase": "fire",
-                "target": "buy_button",
-                "until": "ticket_ready",
+                "target": "sku_confirm_text",
+                "until": "order_ready",
                 "mode": "auto",
-                "window": 8.0,
+                "window": 10.0,
                 "interval_ms": 120,
                 "check_every_ms": 150,
-            },
-            # 选票档（canvas 绘制，用坐标兜底）+ 选数量
-            {
-                "action": "loop",
-                "phase": "post",
-                "until": "order_ready",
-                "max_rounds": 2,
-                "budget": 10,
-                "steps": [
-                    {
-                        "action": "select_tier_grid",
-                        "priority": ["¥380"],
-                        "grid_settle": 0.4,
-                        "optional": True,
-                    },
-                    {
-                        "action": "select_quantity",
-                        "plus_target": "qty_plus",
-                        "current": 1,
-                        "optional": True,
-                    },
-                    {
-                        "action": "tap",
-                        "target": "sku_confirm",
-                        "until": "order_ready",
-                        "until_timeout": 3.0,
-                        "retry": 1,
-                        "settle": 0.1,
-                        "optional": True,
-                    },
-                ],
+                # 预售演出开售前没有购买按钮，要下拉刷新才会出现
+                "refresh_every": 6,
+                # 大麦限流弹窗
+                "blockers": ["我已阅读并同意", "知道了", "继续尝试"],
             },
             # 大麦的订单页也要逐个勾选实名观演人（CheckBox 节点，带 checked 属性）
             {
@@ -519,8 +525,14 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "phase": "post",
                 "target": "submit_button",
                 "verify_price": "¥380",
-                "settle": 2.0,
+                "settle": 1.5,
                 "requires_submit": True,
+                # 大麦限流时弹「抢票人数太多啦，继续尝试别放弃」，
+                # 必须点「继续尝试」再提交，否则订单不会生成。
+                # 但**必须有界 + 退避**：无脑连打会被判定异常行为、触发验证码拦截。
+                "blockers": ["继续尝试"],
+                "retry": 5,
+                "backoff": 2.0,
                 "optional": True,
             },
             {"action": "stop", "phase": "post", "message": "已生成订单，请手动完成支付"},

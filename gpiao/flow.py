@@ -132,6 +132,9 @@ def _act_search(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     return StepResult("search", True, keyword)
 
 
+CAPTCHA_MARKERS = ("验证码拦截", "操作过于频繁", "完成验证后可继续", "安全验证", "滑动验证")
+
+
 def _act_tap(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     name = step["target"]
     t = ctx.target(name)
@@ -140,6 +143,9 @@ def _act_tap(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     until_t = ctx.target(until_name) if until_name and ctx.has_target(until_name) else None
     retries = int(step.get("retry", 0))
     timeout = float(step.get("until_timeout", 2.5))
+    settle = float(step.get("settle", 0.6))
+    # 挡路弹层（大麦限流时弹「抢票人数太多啦，继续尝试别放弃」）
+    blockers = [Target.from_dict("inline", {"text": b}) for b in step.get("blockers", [])]
 
     for attempt in range(retries + 1):
         m = t.find(ctx.device, size)
@@ -148,21 +154,46 @@ def _act_tap(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
             _safe_shot(ctx, f"fail-{name}")
             return StepResult("tap", False, name)
         t.click_match(m, ctx.device, size)
+        time.sleep(settle)
+
+        # 平台风控验证码：只能人工过，脚本必须停下而不是无脑重试
+        try:
+            import re as _re
+
+            xml = ctx.device.u2.dump_hierarchy()
+            page_texts = _re.findall(r'text="([^"]*)"', xml)
+            hit = [w for w in CAPTCHA_MARKERS if any(w in t2 for t2 in page_texts)]
+            if hit:
+                _log_step(ctx, f"⚠ 触发平台风控验证码（{hit[0]}），需人工完成验证，脚本停止重试")
+                _safe_shot(ctx, "captcha")
+                return StepResult("tap", False, "captcha")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 清挡路弹层（限流），清完再点一次目标
+        blocked = False
+        for blk in blockers:
+            if blk.exists(ctx.device, size):
+                _log_step(ctx, "遇到限流弹层，点「继续尝试」后重试")
+                blk.click(ctx.device, size)
+                # **有界退避**：无脑连打会被判定为异常行为触发验证码
+                time.sleep(float(step.get("backoff", 1.5)))
+                blocked = True
+                break
+        if blocked and attempt < retries:
+            continue
 
         if until_t is not None:
             ok, took = until_t.poll(ctx.device, timeout, size)
             if ok:
                 _log_step(ctx, f"点击 {name} 成功，等待 {until_name} 出现（{took:.2f}s）")
-                time.sleep(float(step.get("settle", 0.1)))
+                time.sleep(0.1)
                 return StepResult("tap", True, name)
-            if attempt < retries:
-                _log_step(ctx, f"点击 {name} 后未出现 {until_name}，重试（第 {attempt + 2} 次）")
-                time.sleep(0.25)
+            if blocked and attempt < retries:
                 continue
             _log_step(ctx, f"点击 {name} 后 {until_name} 未出现（超时 {timeout}s）")
             return StepResult("tap", False, name)
 
-        time.sleep(step.get("settle", 0.6))
         _log_step(ctx, f"点击 {name} 成功")
         return StepResult("tap", True, name)
     return StepResult("tap", False, name)
@@ -347,6 +378,8 @@ def _act_burst(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     deadline = time.monotonic() + window
     clicks = 0
     hit = False
+    failed = 0
+    refresh_every = int(step.get("refresh_every", 0))
     last_check = 0.0
     check_every = float(step.get("check_every_ms", 150)) / 1000.0
 
@@ -368,17 +401,29 @@ def _act_burst(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
 
         if mode == "query":
             ok = t.click(ctx.device, size)
+        elif t.has_text_candidate():
+            # 按钮有文本 -> 只按文本点，绝不盲点坐标
+            ok = t.click_real(ctx.device, size)
         else:
             ok = t.click_fast(ctx.device, size)
             if not ok:
                 ok = t.click(ctx.device, size)
         if ok:
             clicks += 1
+            failed = 0
         else:
+            failed += 1
+            # 预售演出开售前详情页没有购买按钮，要下拉刷新才会出现
+            if refresh_every and failed % refresh_every == 0:
+                _log_step(ctx, "按钮还没出现，下拉刷新页面")
+                ctx.device.swipe(
+                    size[0] // 2, int(size[1] * 0.28), size[0] // 2, int(size[1] * 0.80), 0.25
+                )
+                time.sleep(1.2)
             time.sleep(0.05)
             continue
-        # 节流靠 until 检查本身（每次 ~40-170ms），不再额外 sleep
         time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+
 
 
     if until_target is not None:
