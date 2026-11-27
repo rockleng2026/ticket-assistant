@@ -227,12 +227,14 @@ def apply_params_to_recipe(recipe: Recipe, task: Task) -> Recipe:
     if task.schedule.sale_at:
         recipe.sale.at = task.schedule.sale_at
         recipe.sale.lead_seconds = task.schedule.lead_seconds
-    # 优先级也写进步骤里（select_tier 的 priority 是写死的）
+    # 优先级也写进步骤里（select_tier / select_tier_grid 的 priority 是写死的）
     for step in recipe.steps:
         if step.get("action") == "loop":
             for inner in step.get("steps", []):
-                if inner.get("action") == "select_tier":
+                if inner.get("action") in ("select_tier", "select_tier_grid"):
                     inner["priority"] = list(prices)
+        elif step.get("action") in ("select_tier", "select_tier_grid"):
+            step["priority"] = list(prices)
         # 下单前的价格校验也要跟着任务的价格走
         if step.get("requires_submit") and step.get("verify_price"):
             step["verify_price"] = list(prices)[0] if prices else step["verify_price"]

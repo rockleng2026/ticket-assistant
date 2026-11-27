@@ -12,9 +12,10 @@ concert:
   tier: null
   tier_priority:
   - ¥380
-  quantity: 1
+  - ¥480
+  quantity: 2
   max_price: null
-  attendees: 1
+  attendees: 2
   result_match: MADLOVE:ULTRA
 sale:
   at: '2026-11-27 13:22:00'
@@ -60,32 +61,58 @@ selectors:
     - 立即抢购
     - 去预约
     - 已预约
+  session_marker:
+    candidates:
+    - textContains: 1月16日场次
+    - textContains: '2027-01-16'
+    - textContains: 01-16
   ticket_ready:
     candidates:
-    - text: 确认
-    - text: 提交订单
-    - textContains: 票档
-    - textContains: 观演人
+    - text: 票档
+    - text: 场次
+    - textContains: 每笔订单限购
+    - textContains: 确认购买
   order_ready:
     candidates:
-    - text: 提交订单
-    - text: 确认无误
+    - text: 确认购买
+    - text: 立即提交
+    - text: 实名观演人
+    - textContains: 支付方式
     - textContains: 配送方式
-    - textContains: 应付金额
+  sku_confirm:
+    candidates:
+    - text: 确定
+    - bottomRightButton: true
+    - coord:
+      - 0.779
+      - 0.9421
+  submit_button:
+    candidates:
+    - text: 立即提交
+    - text: 提交订单
+    - textContains: 提交
   tier:
     candidates:
     - text: ¥380
     - text: '380'
+    - coord:
+      - 0.1946
+      - 0.441
   qty_plus:
     candidates:
+    - qtyPlus: true
     - descContains: 增加
     - text: +
+    - coord:
+      - 0.8861
+      - 0.8644
   confirm_button:
     candidates:
-    - text: 确认
+    - text: 确定
     - text: 提交订单
   pay_button:
     candidates:
+    - text: 立即提交
     - text: 提交订单
     - text: 立即支付
   reservation_entry:
@@ -127,15 +154,39 @@ steps:
   phase: pre
   target: result_show
   settle: 8.0
+- action: dismiss
+  phase: pre
+  rules:
+  - text: 确认并知晓
+    timeout: 8
+    settle: 2.0
+    optional: true
+  - text: 我知道了
+    timeout: 5
+    settle: 1.5
+    optional: true
 - action: wait
   phase: pre
   target: detail_ready
   timeout: 20
+- action: wait
+  phase: pre
+  target: session_marker
+  timeout: 20
+- action: require
+  phase: pre
+  target: session_marker
+  expect: present
+  message: 当前场次不是任务指定的场次，请在 App 里切到正确的场次
 - action: check_reservation
   phase: pre
   tier: ¥380
-  quantity: 1
+  quantity: 2
   optional: true
+- action: wait
+  phase: pre
+  target: detail_ready
+  timeout: 15
 - action: scroll_top
   phase: pre
   times: 10
@@ -164,18 +215,34 @@ steps:
   phase: post
   until: order_ready
   max_rounds: 2
-  budget: 8
+  budget: 10
   steps:
+  - action: select_tier_grid
+    priority:
+    - ¥380
+    - ¥480
+    grid_settle: 0.4
+    optional: true
+  - action: select_quantity
+    plus_target: qty_plus
+    current: 1
+    optional: true
   - action: tap
-    target: confirm_button
+    target: sku_confirm
     until: order_ready
-    until_timeout: 2.0
+    until_timeout: 3.0
     retry: 1
     settle: 0.1
     optional: true
+- action: select_attendees
+  phase: post
+  entry: 实名观演人
+  confirm: 确认选择
+  optional: true
 - action: tap
   phase: post
-  target: pay_button
+  target: submit_button
+  verify_price: ¥380
   settle: 2.0
   requires_submit: true
   optional: true

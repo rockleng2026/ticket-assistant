@@ -1,4 +1,4 @@
-name: 潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站
+name: 潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站(美团)
 platform: meituan
 app:
   package: com.sankuai.meituan
@@ -6,7 +6,7 @@ app:
   search_entry_hint: 搜索
   deep_link: null
 concert:
-  name: 潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站
+  name: 潘玮柏MADLOVE:ULTRA巡回演唱会-深圳站(美团)
   search_keyword: 潘玮柏
   session: null
   tier: null
@@ -16,6 +16,7 @@ concert:
   quantity: 2
   max_price: null
   attendees: 2
+  result_match: MADLOVE
 sale:
   at: '2026-11-27 13:22:00'
   lead_seconds: 0.5
@@ -45,6 +46,7 @@ selectors:
     - textContains: 搜索演出
   result_show:
     candidates:
+    - textContains: MADLOVE
     - textContains: 潘玮柏
   city_tab:
     candidates:

@@ -262,20 +262,44 @@ def _act_select(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     return StepResult("select", ok, label)
 
 
-def _act_select_quantity(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
-    """通过「+」按钮增加数量；数量已是目标值时跳过。
+def _read_qty(ctx: FlowContext):
+    """读出当前票数（「N张」文本节点）。"""
+    import re as _re
 
-    数量行没有文本标识（「+」是画出来的 ImageView），所以用坐标；
-    点击后靠「N张」文本校验，避免多点/少点。
+    try:
+        from lxml import etree
+
+        xml = ctx.device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    for node in root.iter("node"):
+        t = (node.get("text", "") or "").strip()
+        m = _re.fullmatch(r"(\d+)\s*张", t)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _act_select_quantity(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
+    """把数量调到目标张数。
+
+    **先读当前数量，不够才点「+」**：
+    大麦的「预约」机制已经把票张数设好了（这次是 2 张），
+    如果无条件点一次「+」就会变成 3 张，多买一张！
     """
     count = int(step.get("count", ctx.recipe.concert.quantity))
     plus_name = step.get("plus_target", "qty_plus")
-    current = int(step.get("current", 1))
     size = ctx.screen_size()
 
-    if count <= current:
-        _log_step(ctx, f"数量已是 {current} 张，无需点击")
-        return StepResult("select_quantity", True, str(count))
+    current = _read_qty(ctx)
+    if current is None:
+        current = int(step.get("current", 1))
+    _log_step(ctx, f"数量: 当前 {current} 张，目标 {count} 张")
+
+    if current >= count:
+        _log_step(ctx, f"数量已是 {current} 张，不用点「+」")
+        return StepResult("select_quantity", True, str(current))
     if not ctx.has_target(plus_name):
         _log_step(ctx, f"未定义 {plus_name}，跳过数量设置")
         return StepResult("select_quantity", True, "skipped")
@@ -287,8 +311,10 @@ def _act_select_quantity(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
             break
         plus.click_match(m, ctx.device, size)
         time.sleep(float(step.get("settle", 0.12)))
-    _log_step(ctx, f"数量设置目标 {count} 张")
-    return StepResult("select_quantity", True, str(count))
+
+    after = _read_qty(ctx)
+    _log_step(ctx, f"数量设置后: {after} 张")
+    return StepResult("select_quantity", True, str(after))
 
 
 
@@ -737,6 +763,14 @@ def _act_select_tier_grid(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
         return StepResult("select_tier_grid", False, "no-grid")
 
     settle = float(step.get("grid_settle", 0.4))
+
+    # 大麦的「预约」机制会在开抢后自动勾好票档 —— 先看是不是已经选中了，
+    # 是的话一格都不用点（多点的风险是反而把档位改掉）
+    already = _read_sku_price(ctx, size)
+    if already and already in want:
+        _log_step(ctx, f"票档 {already}: 已被自动勾选（预约机制），直接用")
+        return StepResult("select_tier_grid", True, already)
+
     for pos in grid:
         gx = int(size[0] * float(pos[0]))
         gy = int(size[1] * float(pos[1]))
