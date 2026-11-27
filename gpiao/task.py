@@ -219,6 +219,11 @@ def apply_params_to_recipe(recipe: Recipe, task: Task) -> Recipe:
                     {"textContains": recipe.concert.search_keyword},
                 ]
             }
+    # 场次标记跟着任务的场次走（多场次的演出要核对）
+    if task.target.get("session") and "session_marker" in recipe.selectors:
+        recipe.selectors["session_marker"] = {
+            "candidates": [{"textContains": task.target["session"]}]
+        }
     if task.schedule.sale_at:
         recipe.sale.at = task.schedule.sale_at
         recipe.sale.lead_seconds = task.schedule.lead_seconds

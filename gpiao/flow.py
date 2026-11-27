@@ -671,6 +671,87 @@ def _read_sku_price(ctx: FlowContext, size):
     return None
 
 
+def _tier_row_coords(ctx: FlowContext, size):
+    """从票档区的「可预约 / 缺货登记 / 缺货」标记反推各档的价格文字位置。
+
+    大麦的票档价格是 canvas 画的（没有文本节点），但每个档位右边/下边
+    会有「可预约」「缺货登记」这类**可读**的小标签。
+    用它们的 y 定位行，再用「标签左边一点」推算出价格文字的 x。
+
+    这样不同演出（1 列 7 档 / 2 列 2 档）都能自动适配，不用手标坐标。
+    """
+    import re as _re
+
+    try:
+        from lxml import etree
+
+        xml = ctx.device.u2.dump_hierarchy()
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+
+    w, h = size
+    marks = ("可预约", "缺货登记", "缺货", "已预约", "不可售")
+    rows = []
+    for node in root.iter("node"):
+        t = (node.get("text", "") or "").strip()
+        if t not in marks:
+            continue
+        b = node.get("bounds", "") or ""
+        m = _re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", b)
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(g) for g in m.groups())
+        rows.append(((y1 + y2) // 2, x1))
+    rows.sort()
+
+    coords = []
+    for cy, mx1 in rows:
+        px = max(70, mx1 - 150)
+        coords.append([round(px / w, 4), round(cy / h, 4)])
+    return coords
+
+
+def _act_select_tier_grid(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
+    """大麦专用：网格扫描选票档。
+
+    大麦票档是 canvas 画的（没有文本节点），但每个档位旁边有
+    「可预约」「缺货登记」这类可读标签，可以据此推算出每一档的位置。
+
+    做法：**从前往后扫一遍**，点一档就读底部金额；
+    第一个「金额在优先级列表里」的档位就是它 —— 售罄的档点了没反应（金额不变），
+    自然会被跳过，不会浪费后续档位的点击。
+
+    priority: 可接受的档位，按优先级从高到低（通常是价格从低到高）。
+    """
+    priority = [str(p).strip() for p in (step.get("priority") or ctx.recipe.concert.tier_priority)]
+    want = {_re_price(p) for p in priority if _re_price(p)}
+    size = ctx.screen_size()
+    grid = list(step.get("coords") or [])
+    auto_grid = _tier_row_coords(ctx, size)
+    if auto_grid:
+        grid = auto_grid + grid
+        _log_step(ctx, f"票档位置: 自动推算 {len(auto_grid)} 行")
+    if not grid:
+        _log_step(ctx, "票档: 推算不出档位位置")
+        return StepResult("select_tier_grid", False, "no-grid")
+
+    settle = float(step.get("grid_settle", 0.4))
+    for pos in grid:
+        gx = int(size[0] * float(pos[0]))
+        gy = int(size[1] * float(pos[1]))
+        ctx.device.click(gx, gy)
+        time.sleep(settle)
+        got = _read_sku_price(ctx, size)
+        _log_step(ctx, f"票档网格试点 ({gx},{gy}) -> 底部金额 {got}")
+        if got and got in want:
+            _log_step(ctx, f"票档 {got}: 选中成功（网格扫描）")
+            return StepResult("select_tier_grid", True, got)
+    _safe_shot(ctx, "tier-grid-fail")
+    _log_step(ctx, "票档: 扫描完所有档位都没命中优先级")
+    return StepResult("select_tier_grid", False, ",".join(priority))
+
+
 def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     """按优先级逐个尝试票档：380 → 480 → ...
 
@@ -689,7 +770,12 @@ def _act_select_tier(ctx: FlowContext, step: Dict[str, Any]) -> StepResult:
     budget = float(step.get("total_budget", 5.0))
     # 网格坐标（大麦票档是 canvas 绘制的，只能按位置点）：
     #   [[x比例,y比例], ...] 按顺序尝试，点完从底部金额反查选中的是哪一档
-    grid = step.get("coords") or []
+    grid = list(step.get("coords") or [])
+    # 优先用「可预约/缺货登记」标记自动推算出来的档位位置（适配不同排布）
+    auto_grid = _tier_row_coords(ctx, size)
+    if auto_grid:
+        grid = auto_grid + grid
+        _log_step(ctx, f"票档位置: 自动推算 {len(auto_grid)} 行")
 
     # 从游标继续：上一轮已经试过并且失败的档不再重复浪费时间
     start = min(ctx.tier_cursor, len(priority) - 1) if priority else 0
@@ -1177,6 +1263,7 @@ ACTIONS = {
     "back": _act_back,
     "select": _act_select,
     "select_tier": _act_select_tier,
+    "select_tier_grid": _act_select_tier_grid,
     "select_attendees": _act_select_attendees,
     "select_quantity": _act_select_quantity,
     "loop": _act_loop,

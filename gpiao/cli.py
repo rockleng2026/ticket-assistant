@@ -205,6 +205,7 @@ def cmd_task(args) -> int:
                 "show_name": name,
                 "city": args.city,
                 "result_match": args.result_match or None,
+                "session": args.session or None,
             },
             params={
                 "tier_priority": prices,
@@ -761,6 +762,11 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--name", help="演出名称")
     c.add_argument("--keyword", required=True, help="App 内搜索关键字")
     c.add_argument("--city", default="深圳")
+    c.add_argument(
+        "--session",
+        help="场次标识（如 1月16日场次 / 2027-01-16）。"
+        "多场次的演出用它来核对是不是要的那场",
+    )
     c.add_argument(
         "--result-match",
         help="搜索结果里更精确的匹配串（如 MADLOVE:ULTRA），"

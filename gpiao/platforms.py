@@ -335,6 +335,14 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 ],
                 "aliases": ["立即购买", "立即抢购", "去预约", "已预约"],
             },
+            # 场次确认（同一个演出可能有多个场次，必须核对是不是要的那场）
+            "session_marker": {
+                "candidates": [
+                    {"textContains": "1月16日场次"},
+                    {"textContains": "2027-01-16"},
+                    {"textContains": "01-16"},
+                ]
+            },
             # 购买面板标志（点完「立即购票」会进选票档页）
             "ticket_ready": {
                 "candidates": [
@@ -410,8 +418,31 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
             },
             {"action": "wait", "phase": "pre", "target": "result_show", "timeout": 20},
             {"action": "tap", "phase": "pre", "target": "result_show", "settle": 8.0},
+            # 售票公告「重要提示」弹窗
+            {
+                "action": "dismiss",
+                "phase": "pre",
+                "rules": [
+                    {
+                        "text": "确认并知晓",
+                        "timeout": 8,
+                        "settle": 2.0,
+                        "optional": True,
+                    },
+                    {"text": "我知道了", "timeout": 5, "settle": 1.5, "optional": True},
+                ],
+            },
             # 确认真的进到了详情页（否则「底部宽按钮」会误匹配到别的横幅）
             {"action": "wait", "phase": "pre", "target": "detail_ready", "timeout": 20},
+            # 核对场次（多场次的演出必须确认是用户要的那场）
+            {"action": "wait", "phase": "pre", "target": "session_marker", "timeout": 20},
+            {
+                "action": "require",
+                "phase": "pre",
+                "target": "session_marker",
+                "expect": "present",
+                "message": "当前场次不是任务指定的场次，请在 App 里切到正确的场次",
+            },
             # 核对大麦的「预约」信息（观演人/票档/票张数）
             {
                 "action": "check_reservation",
@@ -452,20 +483,9 @@ def _damai_recipe(task_name: str, keyword: str) -> Dict[str, Any]:
                 "budget": 10,
                 "steps": [
                     {
-                        "action": "select_tier",
+                        "action": "select_tier_grid",
                         "priority": ["¥380"],
-                        "wait": 0.8,
-                        "settle": 0.3,
-                        # 大麦的票档是 canvas 绘制的（没有文本节点），
-                        # 只能按网格位置逐个试，点完从底部金额反查选中的是哪一档。
-                        # 坐标是"第几档"的近似位置，顺序与实际票档顺序对应。
-                        "coords": [
-                            [0.1946, 0.4410],
-                            [0.4943, 0.4410],
-                            [0.1946, 0.5112],
-                            [0.4943, 0.5112],
-                        ],
-                        "grid_settle": 0.45,
+                        "grid_settle": 0.4,
                         "optional": True,
                     },
                     {
