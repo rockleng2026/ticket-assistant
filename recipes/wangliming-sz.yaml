@@ -218,6 +218,7 @@ steps:
   - action: select_tier_grid
     priority:
     - ¥380
+    - ¥580
     grid_settle: 0.4
     optional: true
   - action: select_quantity

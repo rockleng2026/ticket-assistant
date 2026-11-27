@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 import time
@@ -69,6 +70,31 @@ def adb_connect(target: str) -> None:
         raise DeviceError(f"连接 {target} 失败: {out}")
 
 
+def ensure_device() -> List[str]:
+    """确保有设备在线，返回在线设备列表。
+
+    ADB 偶尔会「掉线」（USB 闲置后、或 adb server 状态异常）。
+    抢票这种一次性机会，掉线等于直接输，所以这里做一次自愈：
+    没有任何设备时重启 adb server 再试。
+    """
+    devices = list_devices()
+    if devices:
+        return devices
+    log = logging.getLogger("gpiao.device")
+    log.warning("没有检测到设备，尝试重启 adb server 自愈")
+    try:
+        subprocess.run(["adb", "kill-server"], capture_output=True, timeout=20, check=False)
+        time.sleep(2)
+        subprocess.run(["adb", "start-server"], capture_output=True, timeout=20, check=False)
+        time.sleep(3)
+    except Exception:  # noqa: BLE001
+        pass
+    devices = list_devices()
+    if devices:
+        log.warning("adb server 重启后设备恢复: %s", devices)
+    return devices
+
+
 @dataclass
 class ScreenInfo:
     width: int
@@ -112,7 +138,7 @@ class Device:
             adb_connect(connect_to)
             target = connect_to
         if not target:
-            devices = list_devices()
+            devices = ensure_device()
             if not devices:
                 raise DeviceError(
                     "没有检测到任何 ADB 设备。请先启动模拟器，或用 `gpiao doctor` 查看诊断信息。"

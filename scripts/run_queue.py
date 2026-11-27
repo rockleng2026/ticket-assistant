@@ -25,9 +25,8 @@ from gpiao.task import list_tasks, load_task  # noqa: E402
 
 # 默认队列：按开售时间先后
 DEFAULT_ORDER = [
-    "panweibo-madlove-sz-damai",   # 13:22 大麦
+    "panweibo-madlove-sz",         # 13:22 美团（先上）
     "wangliming-sz",               # 13:33 大麦
-    "panweibo-madlove-sz",         # 美团（补刀）
 ]
 
 
@@ -49,6 +48,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tasks", default=",".join(DEFAULT_ORDER), help="任务 id，逗号分隔")
     ap.add_argument("--start", help="第一个任务的上膛时间 HH:MM")
+    ap.add_argument("--gap", type=int, default=150, help="两个任务之间的间隔秒数（留给你手动支付）")
     ap.add_argument("--no-submit", action="store_true", help="不生成订单（只演练）")
     args = ap.parse_args()
 
@@ -73,15 +73,26 @@ def main() -> int:
 
     for idx, tid in enumerate(ids):
         t = known[tid]
-        cmd = [sys.executable, "-m", "gpiao", "task", "resume", tid]
+        # 每个任务开跑前确认设备还在线（掉线就自愈重启 adb server）
+        from gpiao.device import ensure_device
+
+        devs = ensure_device()
+        if not devs:
+            print(f"[queue] ⚠ 设备不在线！{tid} 可能要错过，请手动介入", flush=True)
+        else:
+            print(f"[queue] 设备在线: {devs}", flush=True)
+
+        cmd = [sys.executable, "-m", "gpiao", "task", "resume", tid, "--wait-now"]
         if not args.no_submit:
             cmd.append("--submit")
         print(f"\n[queue] ===== 第 {idx + 1}/{len(ids)} 个: {tid} =====", flush=True)
         print(f"[queue] $ {' '.join(cmd)}", flush=True)
         rc = subprocess.run(cmd, cwd=str(ROOT)).returncode
         print(f"[queue] {tid} 结束，退出码 {rc}", flush=True)
-        # 下一个任务上膛要 ~2 分钟，留出余量
-        time.sleep(5)
+        if idx + 1 < len(ids):
+            # 留出时间让你手动支付上一个订单（订单锁 15 分钟）
+            print(f"[queue] 等待 {args.gap} 秒（你可以手动支付上一个订单）", flush=True)
+            time.sleep(args.gap)
 
     print("\n[queue] 全部任务执行完毕", flush=True)
     return 0
